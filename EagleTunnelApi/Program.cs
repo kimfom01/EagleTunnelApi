@@ -5,11 +5,19 @@ using Microsoft.AspNetCore.Http.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddOpenApi();
+
 builder.Services.Configure<JsonOptions>(options => { options.SerializerOptions.PropertyNameCaseInsensitive = true; });
 builder.Services.AddScoped<ITributeEventsHandler, TributeEventsHandler>();
 builder.Services.AddScoped<IVerifier, Verifier>();
 
 var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.UseSwaggerUi(options => options.DocumentPath = "openapi/v1.json");
+}
 
 app.UseHttpsRedirection();
 
