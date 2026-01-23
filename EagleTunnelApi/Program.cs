@@ -1,39 +1,52 @@
+using EagleTunnelApi.Webhook.Exceptions;
+using EagleTunnelApi.Webhook.Handlers;
+using EagleTunnelApi.Webhook.Security;
+using Microsoft.AspNetCore.Http.Json;
+
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
+builder.Services.Configure<JsonOptions>(options => { options.SerializerOptions.PropertyNameCaseInsensitive = true; });
+builder.Services.AddScoped<ITributeEventsHandler, TributeEventsHandler>();
+builder.Services.AddScoped<IVerifier, Verifier>();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    app.UseSwaggerUi(options => options.DocumentPath = "openapi/v1.json");
-}
-
 app.UseHttpsRedirection();
 
-var summaries = new[]
+app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier, ITributeEventsHandler eventsHandler) =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
+    try
     {
-        var forecast = Enumerable.Range(1, 5).Select(index =>
-                new WeatherForecast
-                (
-                    DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-                    Random.Shared.Next(-20, 55),
-                    summaries[Random.Shared.Next(summaries.Length)]
-                ))
-            .ToArray();
-        return forecast;
-    })
-    .WithName("GetWeatherForecast");
+        var webhookEvent = await verifier.VerifySignature(request);
 
-app.Run();
+        if (webhookEvent is null)
+        {
+            throw new InvalidPayloadException();
+        }
 
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
+        switch (webhookEvent.Name)
+        {
+            case "new_subscription":
+                await eventsHandler.HandleNewSubscription(webhookEvent);
+                break;
+            case "cancelled_subscription":
+                await eventsHandler.HandleCancelledSubscription(webhookEvent);
+                break;
+            case "renewed_subscription":
+                await eventsHandler.HandleRenewedSubscription(webhookEvent);
+                break;
+        }
+
+        return Results.Ok();
+    }
+    catch (InvalidPayloadException)
+    {
+        return Results.BadRequest("Invalid webhook payload");
+    }
+    catch (InvalidSignatureException)
+    {
+        return Results.Unauthorized();
+    }
+});
+
+await app.RunAsync();
