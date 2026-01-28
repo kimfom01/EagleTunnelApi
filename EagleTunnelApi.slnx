@@ -8,6 +8,7 @@
     <File Path=".dockerignore" />
     <File Path="compose.yaml" />
     <File Path="Dockerfile" />
+    <File Path="README.md" />
   </Folder>
   <Project Path="EagleTunnelApi/EagleTunnelApi.csproj" />
 </Solution>
