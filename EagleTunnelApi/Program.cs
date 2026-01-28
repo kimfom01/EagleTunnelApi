@@ -14,11 +14,14 @@ builder.Services.Configure<JsonOptions>(options => { options.SerializerOptions.P
 builder.Services.AddScoped<IVerifier, Verifier>();
 builder.Services.AddHttpClient<ITributeEventsHandler, TributeEventsHandler>((sp, client) =>
 {
-    client.BaseAddress = new Uri("https://vpn.kimfom.com.ng");
+    client.BaseAddress = new Uri(sp.GetRequiredService<IConfiguration>()
+                                     .GetValue<string>("Remnawave:BaseUri") ??
+                                 throw new InvalidOperationException("Remnawave Base Uri not found in environment"));
     client.DefaultRequestHeaders.Authorization =
         new AuthenticationHeaderValue("Bearer",
             sp.GetRequiredService<IConfiguration>()
-                .GetValue<string>("Remnawave:ApiKey"));
+                .GetValue<string>("Remnawave:ApiKey") ??
+            throw new InvalidOperationException("Remnawave Base API Key not found in environment"));
 });
 
 var app = builder.Build();

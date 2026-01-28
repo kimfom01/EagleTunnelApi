@@ -4,5 +4,10 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/Solution Items/">
+    <File Path=".dockerignore" />
+    <File Path="compose.yaml" />
+    <File Path="Dockerfile" />
+  </Folder>
   <Project Path="EagleTunnelApi/EagleTunnelApi.csproj" />
 </Solution>

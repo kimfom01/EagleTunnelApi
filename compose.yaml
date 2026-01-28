@@ -1,0 +1,10 @@
+﻿services:
+  eagletunnelapi:
+    image: kimfom01/eagletunnelapi
+    build:
+      context: .
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+
