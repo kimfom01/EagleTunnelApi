@@ -1,5 +1,3 @@
 namespace EagleTunnelApi.Webhook.Exceptions;
 
-public class InvalidPayloadException : Exception
-{
-}
+public class InvalidPayloadException : Exception;

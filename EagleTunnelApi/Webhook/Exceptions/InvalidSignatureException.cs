@@ -1,5 +1,3 @@
 namespace EagleTunnelApi.Webhook.Exceptions;
 
-public class InvalidSignatureException : Exception
-{
-}
+public class InvalidSignatureException : Exception;
