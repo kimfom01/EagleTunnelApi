@@ -8,9 +8,6 @@ public interface ITributeEventsHandler
 {
     Task HandleNewSubscription(NewSubscription newSubscription, CancellationToken cancellationToken);
 
-    Task HandleCancelledSubscription(CancelledSubscription cancelledSubscription,
-        CancellationToken cancellationToken);
-
     Task HandleRenewedSubscription(RenewedSubscription renewedSubscription,
         CancellationToken cancellationToken);
 }
@@ -56,37 +53,6 @@ public class TributeEventsHandler : ITributeEventsHandler
         responseMessage.EnsureSuccessStatusCode();
 
         _logger.LogInformation("Successfully Activated User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
-    }
-
-    public async Task HandleCancelledSubscription(CancelledSubscription cancelledSubscription,
-        CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Handling Cancelled Subscription: {@CancelledSubscription}", cancelledSubscription);
-
-        _logger.LogInformation("Fetching User Information From Remnawave. TelegramId: {@TelegramId}",
-            cancelledSubscription.TelegramUserId);
-        var getUserResponse = await _httpClient.GetFromJsonAsync<GetUserResponse>(
-            $"api/users/by-telegram-id/{cancelledSubscription.TelegramUserId}", cancellationToken);
-
-        if (getUserResponse is null)
-        {
-            _logger.LogError("Invalid Response from Remnawave: @{Time}", DateTime.UtcNow);
-            throw new InvalidPayloadException();
-        }
-
-        var user = getUserResponse.Response[0];
-
-        _logger.LogInformation("Cancelling User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
-
-        var expireAt = cancelledSubscription.ExpiresAt;
-
-        var cancelRequest = new CancelUserRequest(user.Uuid, expireAt);
-
-        var responseMessage = await _httpClient.PatchAsJsonAsync("api/users", cancelRequest, cancellationToken);
-
-        responseMessage.EnsureSuccessStatusCode();
-
-        _logger.LogInformation("Successfully Cancelled User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
     }
 
     public async Task HandleRenewedSubscription(RenewedSubscription renewedSubscription,
