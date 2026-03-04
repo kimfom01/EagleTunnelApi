@@ -10,6 +10,8 @@ public interface ITributeEventsHandler
 
     Task HandleRenewedSubscription(RenewedSubscription renewedSubscription,
         CancellationToken cancellationToken);
+
+    Task UnhandledEvent(string eventName);
 }
 
 public class TributeEventsHandler : ITributeEventsHandler
@@ -82,5 +84,12 @@ public class TributeEventsHandler : ITributeEventsHandler
         responseMessage.EnsureSuccessStatusCode();
 
         _logger.LogInformation("Successfully Renewed User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
+    }
+
+    public Task UnhandledEvent(string eventName)
+    {
+        _logger.LogError("Unhandled Event: {EventName} @{Time}", eventName, DateTime.UtcNow);
+
+        return Task.CompletedTask;
     }
 }
