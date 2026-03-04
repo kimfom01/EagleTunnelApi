@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using EagleTunnelApi.ServiceDefaults;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
 using EagleTunnelApi.Webhook.Handlers;
@@ -7,6 +8,8 @@ using EagleTunnelApi.Webhook.Security;
 using Microsoft.AspNetCore.Http.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.AddServiceDefaults();
 
 builder.Services.AddOpenApi();
 
@@ -25,6 +28,8 @@ builder.Services.AddHttpClient<ITributeEventsHandler, TributeEventsHandler>((sp,
 });
 
 var app = builder.Build();
+
+app.MapDefaultEndpoints();
 
 if (app.Environment.IsDevelopment())
 {
@@ -51,10 +56,6 @@ app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
             case "new_subscription":
                 var newSubscription = webhookEvent.Payload.Deserialize<NewSubscription>();
                 await eventsHandler.HandleNewSubscription(newSubscription!, cancellationToken);
-                break;
-            case "cancelled_subscription":
-                var cancelledSubscription = webhookEvent.Payload.Deserialize<CancelledSubscription>();
-                await eventsHandler.HandleCancelledSubscription(cancelledSubscription!, cancellationToken);
                 break;
             case "renewed_subscription":
                 var renewedSubscription = webhookEvent.Payload.Deserialize<RenewedSubscription>();

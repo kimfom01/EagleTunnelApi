@@ -7,6 +7,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.100-alpine3.22 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["EagleTunnelApi/EagleTunnelApi.csproj", "EagleTunnelApi/"]
+COPY ["EagleTunnelApi.ServiceDefaults/EagleTunnelApi.ServiceDefaults.csproj", "EagleTunnelApi.ServiceDefaults/"]
 RUN dotnet restore "EagleTunnelApi/EagleTunnelApi.csproj"
 COPY . .
 WORKDIR "/src/EagleTunnelApi"

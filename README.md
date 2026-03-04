@@ -5,7 +5,7 @@ subscription status to Remnawave.
 
 ## What it does
 - Verifies Tribute webhook signatures with HMAC SHA-256.
-- Handles `new_subscription`, `cancelled_subscription`, and `renewed_subscription`.
+- Handles `new_subscription`, and `renewed_subscription`.
 - Calls Remnawave APIs to activate or cancel user access based on Telegram ID.
 
 ## Requirements
@@ -64,7 +64,6 @@ Body:
 - JSON event with fields `name`, `created_at`, `sent_at`, and `payload`.
 - `name` must be one of:
   - `new_subscription`
-  - `cancelled_subscription`
   - `renewed_subscription`
 
 ## Remnawave API calls
