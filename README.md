@@ -110,4 +110,4 @@ The service interacts with:
 - **TODO:** Implement unit tests for webhook signature verification and handler logic.
 
 ## License
-- **TODO:** Define and add a license file (e.g., MIT, Apache 2.0).
+- [Apache 2.0](LICENSE.md)
