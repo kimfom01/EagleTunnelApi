@@ -62,7 +62,8 @@ app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
                 await eventsHandler.HandleRenewedSubscription(renewedSubscription!, cancellationToken);
                 break;
             default:
-                throw new InvalidOperationException();
+                await eventsHandler.UnhandledEvent(webhookEvent.Name);
+                break;
         }
 
         return Results.Ok();
