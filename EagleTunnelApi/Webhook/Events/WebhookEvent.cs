@@ -14,21 +14,21 @@ public record NewSubscription(
     [property: JsonPropertyName("subscription_name")]
     string SubscriptionName,
     [property: JsonPropertyName("subscription_id")]
-    int SubscriptionId,
+    long SubscriptionId,
     [property: JsonPropertyName("period_id")]
-    int PeriodId,
+    long PeriodId,
     [property: JsonPropertyName("period")] string Period,
     [property: JsonPropertyName("type")] string Type,
-    [property: JsonPropertyName("price")] int Price,
-    [property: JsonPropertyName("amount")] int Amount,
+    [property: JsonPropertyName("price")] decimal Price,
+    [property: JsonPropertyName("amount")] decimal Amount,
     [property: JsonPropertyName("currency")]
     string Currency,
     [property: JsonPropertyName("user_id")]
-    int UserId,
+    long UserId,
     [property: JsonPropertyName("telegram_user_id")]
-    int TelegramUserId,
+    long TelegramUserId,
     [property: JsonPropertyName("channel_id")]
-    int ChannelId,
+    long ChannelId,
     [property: JsonPropertyName("channel_name")]
     string ChannelName,
     [property: JsonPropertyName("expires_at")]
@@ -39,23 +39,23 @@ public record RenewedSubscription(
     [property: JsonPropertyName("subscription_name")]
     string SubscriptionName,
     [property: JsonPropertyName("subscription_id")]
-    int SubscriptionId,
+    long SubscriptionId,
     [property: JsonPropertyName("period_id")]
-    int PeriodId,
+    long PeriodId,
     [property: JsonPropertyName("period")] string Period,
-    [property: JsonPropertyName("price")] int Price,
-    [property: JsonPropertyName("amount")] int Amount,
+    [property: JsonPropertyName("price")] decimal Price,
+    [property: JsonPropertyName("amount")] decimal Amount,
     [property: JsonPropertyName("currency")]
     string Currency,
     [property: JsonPropertyName("user_id")]
-    int UserId,
+    long UserId,
     [property: JsonPropertyName("telegram_user_id")]
-    int TelegramUserId,
+    long TelegramUserId,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("web_app_link")]
     string WebAppLink,
     [property: JsonPropertyName("channel_id")]
-    int ChannelId,
+    long ChannelId,
     [property: JsonPropertyName("channel_name")]
     string ChannelName,
     [property: JsonPropertyName("expires_at")]
