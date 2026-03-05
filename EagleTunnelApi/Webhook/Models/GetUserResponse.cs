@@ -9,12 +9,12 @@ public record GetUserResponse(
 
 public record RemnawaveUser(
     [property: JsonPropertyName("uuid")] string Uuid,
-    [property: JsonPropertyName("id")] int Id,
+    [property: JsonPropertyName("id")] long Id,
     [property: JsonPropertyName("shortUuid")]
     string ShortUuid,
     [property: JsonPropertyName("username")]
     string Username,
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("telegramId")]
-    int TelegramId
+    long TelegramId
 );
