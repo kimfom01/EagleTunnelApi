@@ -55,10 +55,13 @@ public class Verifier : IVerifier
         }
 
         _logger.LogInformation("Signature Verified: {@Time}", DateTime.UtcNow);
+        
 
         var webhookEvent = JsonSerializer.Deserialize<WebhookEvent>(body,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
+        _logger.LogInformation("Webhook Event: {@WebhookEvent}", webhookEvent);
+        
         return webhookEvent;
     }
 }
