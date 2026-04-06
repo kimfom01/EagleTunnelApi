@@ -46,7 +46,7 @@ public class TributeEventsHandler : ITributeEventsHandler
 
         _logger.LogInformation("Enabling User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
 
-        DateTime? expireAt = newSubscription.ExpiresAt;
+        DateTime? expireAt = newSubscription.ExpiresAt.AddHours(1);
 
         var activateRequest = new ActivateUserRequest(user.Uuid, "ACTIVE", expireAt);
 
@@ -75,7 +75,7 @@ public class TributeEventsHandler : ITributeEventsHandler
 
         var user = getUserResponse.Response[0];
 
-        DateTime? expireAt = renewedSubscription.ExpiresAt;
+        DateTime? expireAt = renewedSubscription.ExpiresAt.AddHours(1);
 
         var activateRequest = new ActivateUserRequest(user.Uuid, "ACTIVE", expireAt);
 
