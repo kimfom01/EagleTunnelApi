@@ -38,7 +38,7 @@ public class TributeEventsHandler : ITributeEventsHandler
 
         if (getUserResponse is null)
         {
-            _logger.LogError("Invalid Response from Remnawave: @{Time}", DateTime.UtcNow);
+            _logger.LogError("Invalid Response from Remnawave: @ {Time}", DateTime.UtcNow);
             throw new InvalidPayloadException();
         }
 
@@ -69,7 +69,7 @@ public class TributeEventsHandler : ITributeEventsHandler
 
         if (getUserResponse is null)
         {
-            _logger.LogError("Invalid Response from Remnawave: @{Time}", DateTime.UtcNow);
+            _logger.LogError("Invalid Response from Remnawave: @ {Time}", DateTime.UtcNow);
             throw new InvalidPayloadException();
         }
 
@@ -88,7 +88,7 @@ public class TributeEventsHandler : ITributeEventsHandler
 
     public Task UnhandledEvent(string eventName)
     {
-        _logger.LogError("Unhandled Event: {EventName} @{Time}", eventName, DateTime.UtcNow);
+        _logger.LogError("Unhandled Event: {EventName} @ {Time}", eventName, DateTime.UtcNow);
 
         return Task.CompletedTask;
     }
