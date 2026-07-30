@@ -25,36 +25,65 @@ public class TributeEventsHandler : ITributeEventsHandler
         _httpClient = httpClient;
     }
 
+    private static long ToUnixTimeMs(DateTime dateTime) =>
+        new DateTimeOffset(dateTime).ToUnixTimeMilliseconds();
+
+    private async Task<PanelClient> FetchClientByTelegramId(long telegramId,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Fetching Client From Panel. TelegramId: {TelegramId}", telegramId);
+
+        var response = await _httpClient.GetFromJsonAsync<PanelApiResponse<List<PanelClientResponse>>>(
+            $"/admin/panel/api/clients/get/tgId/{telegramId}", cancellationToken);
+
+        if (response?.Obj is not { Count: > 0 } clientResponses)
+        {
+            _logger.LogError("Client not found for TelegramId: {TelegramId}", telegramId);
+            throw new NotFoundException();
+        }
+
+        return clientResponses[0].Client;
+    }
+
+    private async Task UpdateClient(PanelClient client, long newExpiryTimeMs,
+        CancellationToken cancellationToken)
+    {
+        var updateRequest = new UpdateClientRequest(
+            Email: client.Email,
+            Enable: true,
+            ExpiryTime: newExpiryTimeMs,
+            TotalGB: client.TotalGB,
+            TgId: client.TgId,
+            Comment: client.Comment,
+            LimitIp: client.LimitIp,
+            Reset: client.Reset,
+            Security: client.Security,
+            SubId: client.SubId,
+            Flow: client.Flow
+        );
+
+        _logger.LogInformation("Updating Client At Panel. Email: {Email}", client.Email);
+
+        var responseMessage = await _httpClient.PostAsJsonAsync(
+            $"/admin/panel/api/clients/update/{client.Email}",
+            updateRequest, cancellationToken);
+
+        responseMessage.EnsureSuccessStatusCode();
+
+        _logger.LogInformation("Successfully Updated Client At Panel. Email: {Email}", client.Email);
+    }
 
     public async Task HandleNewSubscription(NewSubscription newSubscription,
         CancellationToken cancellationToken)
     {
         _logger.LogInformation("Handling New Subscription: {@NewSubscription}", newSubscription);
 
-        _logger.LogInformation("Fetching User Information From Remnawave. TelegramId: {@TelegramId}",
-            newSubscription.TelegramUserId);
-        var getUserResponse = await _httpClient.GetFromJsonAsync<GetUserResponse>(
-            $"api/users/by-telegram-id/{newSubscription.TelegramUserId}", cancellationToken);
+        var client = await FetchClientByTelegramId(newSubscription.TelegramUserId, cancellationToken);
 
-        if (getUserResponse is null)
-        {
-            _logger.LogError("Invalid Response from Remnawave: @ {Time}", DateTime.UtcNow);
-            throw new InvalidPayloadException();
-        }
+        var expireAt = newSubscription.ExpiresAt.AddHours(1);
+        var expiryTimeMs = ToUnixTimeMs(expireAt);
 
-        var user = getUserResponse.Response[0];
-
-        _logger.LogInformation("Enabling User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
-
-        DateTime? expireAt = newSubscription.ExpiresAt.AddHours(1);
-
-        var activateRequest = new ActivateUserRequest(user.Uuid, "ACTIVE", expireAt);
-
-        var responseMessage = await _httpClient.PatchAsJsonAsync("api/users", activateRequest, cancellationToken);
-
-        responseMessage.EnsureSuccessStatusCode();
-
-        _logger.LogInformation("Successfully Activated User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
+        await UpdateClient(client, expiryTimeMs, cancellationToken);
     }
 
     public async Task HandleRenewedSubscription(RenewedSubscription renewedSubscription,
@@ -62,28 +91,12 @@ public class TributeEventsHandler : ITributeEventsHandler
     {
         _logger.LogInformation("Handling Renewed Subscription: {@RenewedSubscription}", renewedSubscription);
 
-        _logger.LogInformation("Fetching User Information From Remnawave. TelegramId: {@TelegramId}",
-            renewedSubscription.TelegramUserId);
-        var getUserResponse = await _httpClient.GetFromJsonAsync<GetUserResponse>(
-            $"api/users/by-telegram-id/{renewedSubscription.TelegramUserId}", cancellationToken);
+        var client = await FetchClientByTelegramId(renewedSubscription.TelegramUserId, cancellationToken);
 
-        if (getUserResponse is null)
-        {
-            _logger.LogError("Invalid Response from Remnawave: @ {Time}", DateTime.UtcNow);
-            throw new InvalidPayloadException();
-        }
+        var expireAt = renewedSubscription.ExpiresAt.AddHours(1);
+        var expiryTimeMs = ToUnixTimeMs(expireAt);
 
-        var user = getUserResponse.Response[0];
-
-        DateTime? expireAt = renewedSubscription.ExpiresAt.AddHours(1);
-
-        var activateRequest = new ActivateUserRequest(user.Uuid, "ACTIVE", expireAt);
-
-        var responseMessage = await _httpClient.PatchAsJsonAsync("api/users", activateRequest, cancellationToken);
-
-        responseMessage.EnsureSuccessStatusCode();
-
-        _logger.LogInformation("Successfully Renewed User Subscription At Remnawave. UUID: {@Uuid}", user.Uuid);
+        await UpdateClient(client, expiryTimeMs, cancellationToken);
     }
 
     public Task UnhandledEvent(string eventName)
