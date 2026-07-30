@@ -18,13 +18,13 @@ builder.Services.AddScoped<IVerifier, Verifier>();
 builder.Services.AddHttpClient<ITributeEventsHandler, TributeEventsHandler>((sp, client) =>
 {
     client.BaseAddress = new Uri(sp.GetRequiredService<IConfiguration>()
-                                     .GetValue<string>("Remnawave:BaseUri") ??
-                                 throw new InvalidOperationException("Remnawave Base Uri not found in environment"));
+                                     .GetValue<string>("Panel:BaseUri") ??
+                                 throw new InvalidOperationException("Panel Base Uri not found in environment"));
     client.DefaultRequestHeaders.Authorization =
         new AuthenticationHeaderValue("Bearer",
             sp.GetRequiredService<IConfiguration>()
-                .GetValue<string>("Remnawave:ApiKey") ??
-            throw new InvalidOperationException("Remnawave Base API Key not found in environment"));
+                .GetValue<string>("Panel:ApiKey") ??
+            throw new InvalidOperationException("Panel API Key not found in environment"));
 });
 
 var app = builder.Build();
