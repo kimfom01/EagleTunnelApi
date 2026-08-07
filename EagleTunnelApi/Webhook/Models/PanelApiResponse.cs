@@ -15,6 +15,10 @@ public record PanelClientResponse(
     [property: JsonPropertyName("usedTraffic")] long UsedTraffic
 );
 
+public record PanelInbound(
+    [property: JsonPropertyName("id")] int Id
+);
+
 public record PanelClient(
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("enable")] bool Enable,

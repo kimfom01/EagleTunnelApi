@@ -56,9 +56,17 @@ public class Verifier : IVerifier
 
         _logger.LogInformation("Signature Verified: {@Time}", DateTime.UtcNow);
         
-
-        var webhookEvent = JsonSerializer.Deserialize<WebhookEvent>(body,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        WebhookEvent? webhookEvent;
+        try
+        {
+            webhookEvent = JsonSerializer.Deserialize<WebhookEvent>(body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            _logger.LogError("Invalid JSON Payload: {@Time}", DateTime.UtcNow);
+            return null;
+        }
 
         _logger.LogInformation("Webhook Event: {@WebhookEvent}", webhookEvent);
         
