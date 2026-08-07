@@ -12,4 +12,5 @@
     <Project Path="EagleTunnelApi.AppHost/EagleTunnelApi.AppHost.csproj" />
     <Project Path="EagleTunnelApi.ServiceDefaults/EagleTunnelApi.ServiceDefaults.csproj" />
     <Project Path="EagleTunnelApi/EagleTunnelApi.csproj" />
+    <Project Path="EagleTunnelApi.Tests/EagleTunnelApi.Tests.csproj" />
 </Solution>

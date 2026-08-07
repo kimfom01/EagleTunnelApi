@@ -85,6 +85,7 @@ Panel__ApiKey=your-panel-api-token
   - `Webhook/Models/`: Models for interacting with the 3X-UI Panel API.
 - **`EagleTunnelApi.AppHost/`**: .NET Aspire orchestration project for managing dependencies and local environment.
 - **`EagleTunnelApi.ServiceDefaults/`**: Shared configurations for observability, health checks, and service defaults.
+- **`EagleTunnelApi.Tests/`**: xUnit unit tests for webhook signature verification and subscription event handling.
 - **`Dockerfile`**: Container definition for production deployment.
 
 ## Webhook Endpoint Details
@@ -115,7 +116,12 @@ When a `new_subscription` or `renewed_subscription` event references a Telegram 
 Panel responses that report `"success": false` (the panel answers HTTP 200 even on failure) are treated as errors so failed panel operations surface as non-200 responses and trigger a retry rather than being silently acknowledged. Auto-creation is idempotent: if a create collides with a concurrently-created client (duplicate `tg{telegramId}` email), the service re-fetches by Telegram ID and updates the existing client instead of failing.
 
 ## Tests
-- **TODO:** Implement unit tests for webhook signature verification and handler logic.
+Unit tests live in the `EagleTunnelApi.Tests` project (xUnit). They cover webhook signature verification and the subscription event handler (fetch / update / auto-create / idempotent fallback / error surfacing).
+
+Run them with:
+```bash
+dotnet test
+```
 
 ## License
 - [Apache 2.0](LICENSE.md)
