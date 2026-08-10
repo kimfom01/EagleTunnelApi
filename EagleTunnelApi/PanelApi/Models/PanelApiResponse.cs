@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace EagleTunnelApi.Webhook.Models;
+namespace EagleTunnelApi.PanelApi;
 
 public record PanelApiResponse<T>(
     [property: JsonPropertyName("success")] bool Success,
@@ -15,11 +15,8 @@ public record PanelClientResponse(
     [property: JsonPropertyName("usedTraffic")] long UsedTraffic
 );
 
-public record PanelInbound(
-    [property: JsonPropertyName("id")] int Id
-);
-
 public record PanelClient(
+    [property: JsonPropertyName("uuid")] string Uuid,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("enable")] bool Enable,
     [property: JsonPropertyName("expiryTime")] long ExpiryTime,

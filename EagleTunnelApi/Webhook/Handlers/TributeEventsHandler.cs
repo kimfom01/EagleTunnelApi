@@ -1,7 +1,9 @@
-using System.Text.Json;
+using EagleTunnelApi.Configuration;
+using EagleTunnelApi.PanelApi;
+using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
-using EagleTunnelApi.Webhook.Models;
+using Microsoft.Extensions.Options;
 
 namespace EagleTunnelApi.Webhook.Handlers;
 
@@ -17,121 +19,28 @@ public interface ITributeEventsHandler
 
 public class TributeEventsHandler : ITributeEventsHandler
 {
-    private readonly ILogger<TributeEventsHandler> _logger;
-    private readonly HttpClient _httpClient;
+    private const long TotalGigabytes = 300L * 1024 * 1024 * 1024;
+    private const string VisionFlow = "xtls-rprx-vision";
 
-    public TributeEventsHandler(ILogger<TributeEventsHandler> logger, HttpClient httpClient)
+    private readonly ILogger<TributeEventsHandler> _logger;
+    private readonly IPanelClient _panelClient;
+    private readonly IOptions<TelegramOptions> _telegramOptions;
+
+    public TributeEventsHandler(ILogger<TributeEventsHandler> logger, IPanelClient panelClient,
+        IOptions<TelegramOptions> telegramOptions)
     {
         _logger = logger;
-        _httpClient = httpClient;
+        _panelClient = panelClient;
+        _telegramOptions = telegramOptions;
     }
 
     private static long ToUnixTimeMs(DateTime dateTime) =>
         new DateTimeOffset(dateTime).ToUnixTimeMilliseconds();
 
-    private async Task<PanelClient?> FetchClientByTelegramId(long telegramId,
-        CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Fetching Client From Panel. TelegramId: {TelegramId}", telegramId);
-
-        var response = await _httpClient.GetFromJsonAsync<PanelApiResponse<List<PanelClientResponse>>>(
-            $"/admin/panel/api/clients/get/tgId/{telegramId}", cancellationToken);
-
-        if (response is null)
-        {
-            throw new PanelApiException("Panel returned an empty response");
-        }
-
-        if (!response.Success)
-        {
-            _logger.LogError("Panel fetch failed. TelegramId: {TelegramId}, Message: {Msg}", telegramId, response.Msg);
-            throw new PanelApiException($"Panel fetch failed: {response.Msg}");
-        }
-
-        if (response.Obj is not { Count: > 0 } clientResponses)
-        {
-            _logger.LogWarning("Client not found for TelegramId: {TelegramId}", telegramId);
-            return null;
-        }
-
-        if (clientResponses.Count > 1)
-        {
-            var emails = string.Join(", ", clientResponses.Select(c => c.Client.Email));
-            _logger.LogWarning(
-                "Multiple clients found for TelegramId: {TelegramId}. Using first match. Emails: {Emails}",
-                telegramId, emails);
-        }
-
-        return clientResponses[0].Client;
-    }
-
-    private static string RandomString(int length)
-    {
-        const string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-
-        return new string(Enumerable.Repeat(chars, length)
-            .Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
-    }
-
-    private async Task<List<int>> FetchAllInboundIds(CancellationToken cancellationToken)
-    {
-        var response = await _httpClient.GetFromJsonAsync<PanelApiResponse<List<PanelInbound>>>(
-            "/admin/panel/api/inbounds/list", cancellationToken);
-
-        if (response is null)
-        {
-            throw new PanelApiException("Panel returned an empty response");
-        }
-
-        if (!response.Success)
-        {
-            _logger.LogError("Panel inbounds fetch failed. Message: {Msg}", response.Msg);
-            throw new PanelApiException($"Panel inbounds fetch failed: {response.Msg}");
-        }
-
-        return response.Obj?.Select(inbound => inbound.Id).ToList() ?? [];
-    }
-
-    private async Task PostAndValidateAsync(string url, object body, string action,
-        CancellationToken cancellationToken)
-    {
-        var responseMessage = await _httpClient.PostAsJsonAsync(url, body, cancellationToken);
-
-        PanelApiResponse<object>? apiResponse = null;
-        if (responseMessage.Content.Headers.ContentType?.MediaType?.Contains("json", StringComparison.OrdinalIgnoreCase)
-            is true)
-        {
-            try
-            {
-                apiResponse = await responseMessage.Content.ReadFromJsonAsync<PanelApiResponse<object>>(cancellationToken);
-            }
-            catch (JsonException)
-            {
-                apiResponse = null;
-            }
-        }
-
-        if (!responseMessage.IsSuccessStatusCode || apiResponse is null || !apiResponse.Success)
-        {
-            var message = apiResponse?.Msg ?? responseMessage.ReasonPhrase ?? "unknown";
-            _logger.LogError("{Action} failed. Status: {Status}, Message: {Message}", action,
-                responseMessage.StatusCode, message);
-            throw new PanelApiException($"{action} failed: {message}");
-        }
-    }
-
     private async Task CreateClient(long telegramId, long expiryTimeMs, string subscriptionName,
         CancellationToken cancellationToken)
     {
         _logger.LogWarning("Creating Missing Client At Panel. TelegramId: {TelegramId}", telegramId);
-
-        var inboundIds = await FetchAllInboundIds(cancellationToken);
-
-        if (inboundIds.Count == 0)
-        {
-            _logger.LogError("No inbounds available to attach new client. TelegramId: {TelegramId}", telegramId);
-            throw new NotFoundException();
-        }
 
         var email = $"tg{telegramId}";
         var createRequest = new CreateClientPayload(
@@ -139,19 +48,19 @@ public class TributeEventsHandler : ITributeEventsHandler
                 Email: email,
                 Enable: true,
                 ExpiryTime: expiryTimeMs,
-                TotalGB: 0,
+                TotalGB: TotalGigabytes,
                 TgId: telegramId,
                 Comment: $"Created from subscription: {subscriptionName}",
                 LimitIp: 0,
-                SubId: RandomString(16)
+                SubId: RandomString.LowerAndNum(16),
+                Password: RandomString.LowerAndNum(16),
+                Auth: RandomString.LowerAndNum(16),
+                Flow: VisionFlow
             ),
-            inboundIds
+            _telegramOptions.Value.DefaultInboundIds.ToList()
         );
 
-        _logger.LogInformation("Creating Client At Panel. Email: {Email}, InboundIds: {@InboundIds}", email,
-            inboundIds);
-
-        await PostAndValidateAsync("/admin/panel/api/clients/add", createRequest, "Creating client", cancellationToken);
+        await _panelClient.AddClientAsync(createRequest, cancellationToken);
 
         _logger.LogInformation("Successfully Created Client At Panel. Email: {Email}", email);
     }
@@ -188,6 +97,12 @@ public class TributeEventsHandler : ITributeEventsHandler
         }
     }
 
+    private async Task<PanelClient?> FetchClientByTelegramId(long telegramId, CancellationToken cancellationToken)
+    {
+        var response = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
+        return response?.Client;
+    }
+
     private async Task UpdateClient(PanelClient client, long newExpiryTimeMs,
         CancellationToken cancellationToken)
     {
@@ -205,12 +120,7 @@ public class TributeEventsHandler : ITributeEventsHandler
             Flow: client.Flow
         );
 
-        _logger.LogInformation("Updating Client At Panel. Email: {Email}", client.Email);
-
-        await PostAndValidateAsync($"/admin/panel/api/clients/update/{client.Email}", updateRequest,
-            "Updating client", cancellationToken);
-
-        _logger.LogInformation("Successfully Updated Client At Panel. Email: {Email}", client.Email);
+        await _panelClient.UpdateClientAsync(updateRequest, cancellationToken);
     }
 
     public async Task HandleNewSubscription(NewSubscription newSubscription,

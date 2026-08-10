@@ -1,11 +1,19 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Logging;
+using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.ServiceDefaults;
+using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
 using EagleTunnelApi.Webhook.Handlers;
 using EagleTunnelApi.Webhook.Security;
 using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.Options;
+using Telegram.Bot;
+using Telegram.Bot.Polling;
+using Telegram.Bot.Types;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,18 +22,51 @@ builder.AddServiceDefaults();
 builder.Services.AddOpenApi();
 
 builder.Services.Configure<JsonOptions>(options => { options.SerializerOptions.PropertyNameCaseInsensitive = true; });
+
+builder.Services.AddOptions<TelegramOptions>()
+    .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<TelegramOptions>, TelegramOptionsValidator>();
+
+builder.Services.AddOptions<PanelOptions>()
+    .Bind(builder.Configuration.GetSection(PanelOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<PanelOptions>, PanelOptionsValidator>();
+
+builder.Services.AddOptions<TributeOptions>()
+    .Bind(builder.Configuration.GetSection(TributeOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<TributeOptions>, TributeOptionsValidator>();
+
 builder.Services.AddScoped<IVerifier, Verifier>();
-builder.Services.AddHttpClient<ITributeEventsHandler, TributeEventsHandler>((sp, client) =>
+
+builder.Services.AddTransient<OutgoingRequestLoggingHandler>();
+
+builder.Services.AddHttpClient<IPanelClient, PanelApiClient>((sp, client) =>
 {
-    client.BaseAddress = new Uri(sp.GetRequiredService<IConfiguration>()
-                                     .GetValue<string>("Panel:BaseUri") ??
-                                 throw new InvalidOperationException("Panel Base Uri not found in environment"));
+    var panelOptions = sp.GetRequiredService<IOptions<PanelOptions>>().Value;
+
+    client.BaseAddress = new Uri(panelOptions.BaseUri);
     client.DefaultRequestHeaders.Authorization =
-        new AuthenticationHeaderValue("Bearer",
-            sp.GetRequiredService<IConfiguration>()
-                .GetValue<string>("Panel:ApiKey") ??
-            throw new InvalidOperationException("Panel API Key not found in environment"));
-});
+        new AuthenticationHeaderValue("Bearer", panelOptions.ApiKey);
+}).AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
+
+builder.Services.AddHttpClient("telegram_bot_client")
+    .AddTypedClient<ITelegramBotClient>((httpClient, sp) =>
+    {
+        var telegramOptions = sp.GetRequiredService<IOptions<TelegramOptions>>().Value;
+        return new TelegramBotClient(telegramOptions.BotToken, httpClient);
+    })
+    .AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
+
+builder.Services.AddSingleton<SessionStore>();
+builder.Services.AddSingleton<IUpdateHandler, TelegramHandlers>();
+builder.Services.AddSingleton<TelegramHandlers>();
+
+if (!builder.Environment.IsProduction())
+{
+    builder.Services.AddHostedService<TelegramPollingService>();
+}
 
 var app = builder.Build();
 
@@ -38,6 +79,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier, ITributeEventsHandler eventsHandler,
     CancellationToken cancellationToken) =>
@@ -82,4 +125,55 @@ app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
     }
 });
 
+var telegramOptions = app.Services.GetRequiredService<IOptions<TelegramOptions>>().Value;
+
+app.MapPost(telegramOptions.WebhookPath, async (HttpRequest request, IUpdateHandler updateHandler,
+    ITelegramBotClient botClient, CancellationToken cancellationToken) =>
+{
+    var configuredSecretToken = telegramOptions.WebhookSecretToken;
+
+    if (!string.IsNullOrEmpty(configuredSecretToken) &&
+        !request.Headers["X-Telegram-Bot-Api-Secret-Token"].Equals(configuredSecretToken))
+    {
+        return Results.Unauthorized();
+    }
+
+    Update? update;
+    try
+    {
+        update = await request.ReadFromJsonAsync<Update>(JsonBotAPI.Options, cancellationToken);
+    }
+    catch (JsonException)
+    {
+        return Results.BadRequest("Invalid JSON payload");
+    }
+
+    if (update is null)
+    {
+        return Results.BadRequest("Invalid body");
+    }
+
+    await updateHandler.HandleUpdateAsync(botClient, update, cancellationToken);
+
+    return Results.Ok();
+});
+
+if (app.Environment.IsProduction())
+{
+    var botClient = app.Services.GetRequiredService<ITelegramBotClient>();
+
+    var webhookEndpoint = new Uri(new Uri(telegramOptions.WebhookUrl), telegramOptions.WebhookPath).ToString();
+
+    await botClient.SetWebhook(webhookEndpoint,
+        secretToken: string.IsNullOrEmpty(telegramOptions.WebhookSecretToken) ? null : telegramOptions.WebhookSecretToken);
+
+    app.Services.GetRequiredService<ILogger<EagleTunnelApi.Program>>().LogInformation("Telegram webhook set to {WebhookEndpoint}",
+        webhookEndpoint);
+}
+
 await app.RunAsync();
+
+namespace EagleTunnelApi
+{
+    public partial class Program;
+}

@@ -1,11 +1,14 @@
 using System.Net;
 using System.Text.Json;
+using EagleTunnelApi.Configuration;
+using EagleTunnelApi.PanelApi;
+using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Tests.Helpers;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
 using EagleTunnelApi.Webhook.Handlers;
-using EagleTunnelApi.Webhook.Models;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace EagleTunnelApi.Tests.Webhook.Handlers;
@@ -19,6 +22,8 @@ public class TributeEventsHandlerTests
 
     private static readonly long ExpectedExpiryMs =
         new DateTimeOffset(ExpiresAt.AddHours(1)).ToUnixTimeMilliseconds();
+
+    private const long TotalGigabytes = 300L * 1024 * 1024 * 1024;
 
     private static NewSubscription NewSubscriptionEvent(long telegramUserId = TelegramId) => new(
         SubscriptionName: "Standard",
@@ -55,6 +60,7 @@ public class TributeEventsHandlerTests
     );
 
     private static PanelClient SampleClient(string email = "user@example.com", long tgId = TelegramId) => new(
+        Uuid: "uuid-1234",
         Email: email,
         Enable: false,
         ExpiryTime: 1,
@@ -77,32 +83,33 @@ public class TributeEventsHandlerTests
         return JsonSerializer.Serialize(apiResponse);
     }
 
-    private static string InboundsJson(params int[] inboundIds)
-    {
-        var apiResponse = new PanelApiResponse<List<PanelInbound>>(true, "ok",
-            inboundIds.Select(id => new PanelInbound(id)).ToList());
-
-        return JsonSerializer.Serialize(apiResponse);
-    }
-
     private static string SuccessJson() => JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
 
     private static string FailureJson(string message) =>
         JsonSerializer.Serialize(new PanelApiResponse<object>(false, message, null));
 
     private static TributeEventsHandler CreateHandler(Func<HttpRequestMessage, HttpResponseMessage> responder,
-        List<HttpRequestMessage>? requests = null)
+        List<HttpRequestMessage>? requests = null, int[]? inboundIds = null)
     {
-        var client = new HttpClient(new StubHttpMessageHandler(request =>
+        var options = Options.Create(new TelegramOptions
         {
-            requests?.Add(request);
-            return responder(request);
-        }))
-        {
-            BaseAddress = new Uri(BaseUri)
-        };
+            BotToken = "token",
+            SupportUrl = "https://t.me/support",
+            TributeSubscriptionUrl = "https://tribute.test",
+            DefaultInboundIds = inboundIds ?? new[] { 1, 2 },
+            WebhookPath = "/webhook/telegram"
+        });
 
-        return new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance, client);
+        return new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance,
+            new PanelApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+            {
+                requests?.Add(request);
+                return responder(request);
+            }))
+            {
+                BaseAddress = new Uri(BaseUri)
+            }, NullLogger<PanelApiClient>.Instance),
+            options);
     }
 
     private static async Task<JsonElement> ReadBodyJson(HttpRequestMessage request)
@@ -197,11 +204,6 @@ public class TributeEventsHandlerTests
                 return StubHttpMessageHandler.Json(ClientListJson());
             }
 
-            if (path == "/admin/panel/api/inbounds/list")
-            {
-                return StubHttpMessageHandler.Json(InboundsJson(1, 2));
-            }
-
             if (path == "/admin/panel/api/clients/add")
             {
                 return StubHttpMessageHandler.Json(SuccessJson());
@@ -219,10 +221,13 @@ public class TributeEventsHandlerTests
         Assert.Equal($"tg{TelegramId}", client.GetProperty("email").GetString());
         Assert.True(client.GetProperty("enable").GetBoolean());
         Assert.Equal(ExpectedExpiryMs, client.GetProperty("expiryTime").GetInt64());
-        Assert.Equal(0, client.GetProperty("totalGB").GetInt64());
+        Assert.Equal(TotalGigabytes, client.GetProperty("totalGB").GetInt64());
         Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
         Assert.Equal(0, client.GetProperty("limitIp").GetInt32());
         Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("subId").GetString()!);
+        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("password").GetString()!);
+        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("auth").GetString()!);
+        Assert.Equal("xtls-rprx-vision", client.GetProperty("flow").GetString());
 
         Assert.Equal(new[] { 1, 2 }, body.GetProperty("inboundIds").EnumerateArray()
             .Select(e => e.GetInt32()).ToArray());
@@ -232,7 +237,7 @@ public class TributeEventsHandlerTests
     }
 
     [Fact]
-    public async Task HandleNewSubscription_MissingClient_CreatesClient()
+    public async Task HandleNewSubscription_MissingClient_CreatesClient_WithConfiguredInbounds()
     {
         var requests = new List<HttpRequestMessage>();
 
@@ -245,75 +250,26 @@ public class TributeEventsHandlerTests
                 return StubHttpMessageHandler.Json(ClientListJson());
             }
 
-            if (path == "/admin/panel/api/inbounds/list")
-            {
-                return StubHttpMessageHandler.Json(InboundsJson(1));
-            }
-
             if (path == "/admin/panel/api/clients/add")
             {
                 return StubHttpMessageHandler.Json(SuccessJson());
             }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, requests);
+        }, requests, inboundIds: new[] { 5 });
 
         await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
 
         var createRequest = Assert.Single(requests, r => r.RequestUri!.AbsolutePath.EndsWith("/clients/add"));
-        var client = (await ReadBodyJson(createRequest)).GetProperty("client");
+        var body = await ReadBodyJson(createRequest);
 
+        var client = body.GetProperty("client");
         Assert.Equal($"tg{TelegramId}", client.GetProperty("email").GetString());
         Assert.Equal(ExpectedExpiryMs, client.GetProperty("expiryTime").GetInt64());
         Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
-    }
 
-    [Fact]
-    public async Task HandleRenewedSubscription_MissingClientAndNoInbounds_ThrowsNotFoundException()
-    {
-        var handler = CreateHandler(request =>
-        {
-            var path = request.RequestUri!.AbsolutePath;
-
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return StubHttpMessageHandler.Json(ClientListJson());
-            }
-
-            if (path == "/admin/panel/api/inbounds/list")
-            {
-                return StubHttpMessageHandler.Json(InboundsJson());
-            }
-
-            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        });
-
-        await Assert.ThrowsAsync<NotFoundException>(() =>
-            handler.HandleRenewedSubscription(RenewedSubscriptionEvent(), CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task HandleRenewedSubscription_InboundsFetchFails_ThrowsPanelApiException()
-    {
-        var handler = CreateHandler(request =>
-        {
-            var path = request.RequestUri!.AbsolutePath;
-
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return StubHttpMessageHandler.Json(ClientListJson());
-            }
-
-            if (path == "/admin/panel/api/inbounds/list")
-            {
-                return StubHttpMessageHandler.Json(FailureJson("inbounds exploded"));
-            }
-
-            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        });
-
-        await Assert.ThrowsAsync<PanelApiException>(() =>
-            handler.HandleRenewedSubscription(RenewedSubscriptionEvent(), CancellationToken.None));
+        Assert.Equal(new[] { 5 }, body.GetProperty("inboundIds").EnumerateArray()
+            .Select(e => e.GetInt32()).ToArray());
     }
 
     [Fact]
@@ -335,14 +291,20 @@ public class TributeEventsHandlerTests
                     return StubHttpMessageHandler.Json(ClientListJson());
                 }
 
-                return StubHttpMessageHandler.Json(ClientListJson(new PanelClient($"tg{TelegramId}", true,
-                    ExpectedExpiryMs, TelegramId, 0, "Created from subscription: Standard", 0, 0, null, "sub456",
-                    null, 99)));
-            }
-
-            if (path == "/admin/panel/api/inbounds/list")
-            {
-                return StubHttpMessageHandler.Json(InboundsJson(1));
+                return StubHttpMessageHandler.Json(ClientListJson(new PanelClient(
+                    Uuid: "uuid-5678",
+                    Email: $"tg{TelegramId}",
+                    Enable: true,
+                    ExpiryTime: ExpectedExpiryMs,
+                    TgId: TelegramId,
+                    TotalGB: 0,
+                    Comment: "Created from subscription: Standard",
+                    LimitIp: 0,
+                    Reset: 0,
+                    Security: null,
+                    SubId: "sub456",
+                    Flow: null,
+                    Id: 99)));
             }
 
             if (path == "/admin/panel/api/clients/add")
@@ -378,11 +340,6 @@ public class TributeEventsHandlerTests
             {
                 getRequests++;
                 return StubHttpMessageHandler.Json(ClientListJson());
-            }
-
-            if (path == "/admin/panel/api/inbounds/list")
-            {
-                return StubHttpMessageHandler.Json(InboundsJson(1));
             }
 
             if (path == "/admin/panel/api/clients/add")

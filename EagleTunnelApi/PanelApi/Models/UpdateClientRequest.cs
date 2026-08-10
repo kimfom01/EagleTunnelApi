@@ -1,13 +1,8 @@
 using System.Text.Json.Serialization;
 
-namespace EagleTunnelApi.Webhook.Models;
+namespace EagleTunnelApi.PanelApi.Models;
 
-public record CreateClientPayload(
-    [property: JsonPropertyName("client")] CreateClientRequest Client,
-    [property: JsonPropertyName("inboundIds")] List<int> InboundIds
-);
-
-public record CreateClientRequest(
+public record UpdateClientRequest(
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("enable")] bool Enable,
     [property: JsonPropertyName("expiryTime")] long ExpiryTime,
@@ -15,5 +10,8 @@ public record CreateClientRequest(
     [property: JsonPropertyName("tgId")] long TgId,
     [property: JsonPropertyName("comment")] string? Comment,
     [property: JsonPropertyName("limitIp")] int LimitIp,
-    [property: JsonPropertyName("subId")] string SubId
+    [property: JsonPropertyName("reset")] int Reset,
+    [property: JsonPropertyName("security")] string? Security,
+    [property: JsonPropertyName("subId")] string? SubId,
+    [property: JsonPropertyName("flow")] string? Flow
 );
