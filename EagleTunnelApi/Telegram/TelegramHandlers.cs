@@ -1,3 +1,4 @@
+using System.Text;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
@@ -74,7 +75,7 @@ public sealed class TelegramHandlers : IUpdateHandler
                 _logger.LogInformation("User started bot. TelegramId: {TelegramId}, Username: {Username}",
                     telegramId, message.Chat.Username);
                 _sessionStore.Reset(telegramId);
-                await ShowStart(botClient, telegramId, cancellationToken);
+                await ShowStart(botClient, telegramId, message.From, cancellationToken);
                 return;
 
             case "/help":
@@ -84,27 +85,44 @@ public sealed class TelegramHandlers : IUpdateHandler
                 return;
         }
 
-        await HandleTextMessage(botClient, telegramId, text, cancellationToken);
+        await botClient.SendMessage(telegramId,
+            $"Please contact {_telegramOptions.SupportUrl} for any support requests",
+            cancellationToken: cancellationToken);
     }
 
-    private async Task ShowStart(ITelegramBotClient botClient, long telegramId,
+    private async Task ShowStart(ITelegramBotClient botClient, long telegramId, User? from,
         CancellationToken cancellationToken)
     {
         var userDetails = await GetUserDetails(telegramId, cancellationToken);
 
         if (userDetails is null)
         {
-            _logger.LogInformation("New user detected, needs registration. TelegramId: {TelegramId}", telegramId);
+            _logger.LogInformation("New user detected, auto-registering. TelegramId: {TelegramId}", telegramId);
 
-            var session = _sessionStore.Get(telegramId);
-
-            if (session.RegistrationStep == RegistrationStep.None)
+            try
             {
+                await RegisterNewUser(telegramId, from, cancellationToken);
+
+                _logger.LogInformation("Auto-registration complete. TelegramId: {TelegramId}", telegramId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Auto-registration failed. TelegramId: {TelegramId}", telegramId);
+
                 await botClient.SendMessage(telegramId,
-                    "👤 Welcome to Eagle Tunnel Network! Please complete your registration.\n\nClick below to start:",
-                    replyMarkup: MenuService.StartRegistrationMenu(), cancellationToken: cancellationToken);
+                    "❌ Something went wrong creating your account. Please try /start again.",
+                    cancellationToken: cancellationToken);
+                return;
             }
 
+            userDetails = await GetUserDetails(telegramId, cancellationToken);
+        }
+
+        if (userDetails is null)
+        {
+            await botClient.SendMessage(telegramId,
+                "❌ We couldn't find your account yet. Please use /start again shortly.",
+                cancellationToken: cancellationToken);
             return;
         }
 
@@ -125,7 +143,7 @@ public sealed class TelegramHandlers : IUpdateHandler
             cancellationToken: cancellationToken);
     }
 
-    private string BuildStatusText(UserDetails userDetails)
+    private static string BuildStatusText(UserDetails userDetails)
     {
         var usedBandwidth = SubscriptionFormatter.FormatGigabytes(userDetails.UsedTrafficBytes) + "/" +
                             SubscriptionFormatter.FormatGigabytes(userDetails.TrafficLimitBytes);
@@ -141,16 +159,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (userDetails.Status == SubscriptionStatus.Active)
         {
-            text +=
-                "\n\n📱 To connect:\n" +
-                "1️⃣ Tap 'Copy VPN Link'\n" +
-                "2️⃣ Open INCY\n" +
-                "3️⃣ Tap on \"Clipboard\"\n" +
-                "Select \"Allow Paste\" if prompted.\n" +
-                "4️⃣ Select a server location\n" +
-                "5️⃣ Tap the big power button to connect\n" +
-                "Allow VPN permission if prompted.\n\n" +
-                "You're connected 🎉";
+            text += "\n\n📲 Tap 'Copy VPN Link' to grab your link, or 'How to Connect' for a quick setup guide.";
         }
 
         return text;
@@ -170,107 +179,68 @@ public sealed class TelegramHandlers : IUpdateHandler
         }
     }
 
-    private async Task HandleTextMessage(ITelegramBotClient botClient, long telegramId, string messageText,
-        CancellationToken cancellationToken)
+    private static string SanitizePanelUsername(params string?[] parts)
     {
-        var session = _sessionStore.Get(telegramId);
-        var input = messageText.Trim();
+        var builder = new StringBuilder();
 
-        switch (session.RegistrationStep)
+        foreach (var part in parts)
         {
-            case RegistrationStep.FirstName:
-                if (input.Length == 0)
+            if (string.IsNullOrWhiteSpace(part))
+            {
+                continue;
+            }
+
+            foreach (var rune in part.EnumerateRunes())
+            {
+                if (Rune.IsLetterOrDigit(rune))
                 {
-                    await botClient.SendMessage(telegramId, "Please enter a valid first name.",
-                        cancellationToken: cancellationToken);
-                    return;
+                    builder.Append(rune);
                 }
-
-                session.FirstName = input;
-                session.RegistrationStep = RegistrationStep.MiddleName;
-
-                await botClient.SendMessage(telegramId,
-                    "Thank you! Now please enter your **middle name** (or type 'skip' to leave it empty):",
-                    parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
-                return;
-
-            case RegistrationStep.MiddleName:
-                if (string.Equals(input, "skip", StringComparison.OrdinalIgnoreCase))
-                {
-                    session.MiddleName = null;
-                }
-                else
-                {
-                    session.MiddleName = input;
-                }
-
-                session.RegistrationStep = RegistrationStep.LastName;
-
-                await botClient.SendMessage(telegramId, "Almost done! Please enter your **last name**:",
-                    parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
-                return;
-
-            case RegistrationStep.LastName:
-                await FinishRegistration(botClient, telegramId, input, cancellationToken);
-                return;
-
-            default:
-                await botClient.SendMessage(telegramId,
-                    $"Please contact {_telegramOptions.SupportUrl} for any support requests",
-                    cancellationToken: cancellationToken);
-                return;
+            }
         }
+
+        return builder.ToString();
     }
 
-    private async Task FinishRegistration(ITelegramBotClient botClient, long telegramId, string input,
-        CancellationToken cancellationToken)
+    private static string BuildPanelComment(long telegramId, User? from)
     {
-        var session = _sessionStore.Get(telegramId);
+        var fullName = string.Join(" ", new[] { from?.FirstName, from?.LastName }
+            .Where(name => !string.IsNullOrWhiteSpace(name)));
 
-        if (input.Length == 0)
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(fullName))
         {
-            await botClient.SendMessage(telegramId, "Please enter a valid last name.",
-                cancellationToken: cancellationToken);
-            return;
+            parts.Add(fullName);
         }
 
-        session.LastName = input;
-        session.RegistrationStep = RegistrationStep.None;
-
-        var usernameParts = new List<string> { session.FirstName ?? "" };
-        if (session.MiddleName is { Length: > 0 })
+        if (!string.IsNullOrWhiteSpace(from?.Username))
         {
-            usernameParts.Add(session.MiddleName);
+            parts.Add($"@{from.Username}");
         }
 
-        usernameParts.Add(session.LastName);
-        var username = string.Concat(usernameParts);
+        parts.Add($"Telegram ID: {telegramId}");
 
-        try
-        {
-            await RegisterNewUser(telegramId, username, cancellationToken);
-
-            _logger.LogInformation("User registered successfully. TelegramId: {TelegramId}, Username: {Username}",
-                telegramId, username);
-
-            await botClient.SendMessage(telegramId,
-                $"✅ Registration complete!\n\nWelcome {session.FirstName} {session.LastName}! Your account is ready.",
-                cancellationToken: cancellationToken);
-
-            await ShowStart(botClient, telegramId, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "User registration failed. TelegramId: {TelegramId}", telegramId);
-
-            await botClient.SendMessage(telegramId,
-                "❌ Registration failed. Please try again by using /start command.",
-                cancellationToken: cancellationToken);
-        }
+        return string.Join(" · ", parts);
     }
 
-    private async Task RegisterNewUser(long telegramId, string username, CancellationToken cancellationToken)
+    private async Task RegisterNewUser(long telegramId, User? from, CancellationToken cancellationToken)
     {
+        var username = SanitizePanelUsername(from?.FirstName, from?.LastName);
+        if (username.Length == 0)
+        {
+            username = SanitizePanelUsername(from?.Username);
+        }
+
+        if (username.Length == 0)
+        {
+            username = $"user{telegramId}";
+        }
+
+        if (username.Length > 32)
+        {
+            username = username[..32];
+        }
+
         var expiryTimeMs = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds();
 
         var payload = new CreateClientPayload(
@@ -280,7 +250,7 @@ public sealed class TelegramHandlers : IUpdateHandler
                 ExpiryTime: expiryTimeMs,
                 TotalGB: TotalGigabytes,
                 TgId: telegramId,
-                Comment: null,
+                Comment: BuildPanelComment(telegramId, from),
                 LimitIp: 0,
                 SubId: RandomString.LowerAndNum(16),
                 Password: RandomString.LowerAndNum(16),
@@ -310,78 +280,37 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         switch (data)
         {
-            case MenuService.StartRegistration:
-                session.RegistrationStep = RegistrationStep.FirstName;
-
-                await botClient.EditMessageText(telegramId.Value, messageId, "Please enter your **first name**:",
-                    parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
-                break;
-
-            case MenuService.Setup:
-                await botClient.EditMessageReplyMarkup(telegramId.Value, messageId, MenuService.SetupMenu(),
+            case MenuService.Connect:
+                await botClient.EditMessageText(telegramId.Value, messageId,
+                    "🚀 *How to Connect*\n\n" +
+                    "1️⃣ Install **INCY** from the App Store or Play Store\n" +
+                    "2️⃣ Tap **📋 Copy VPN Link** below\n" +
+                    "3️⃣ Open INCY and tap **\"Paste\"**\n" +
+                    "   Select \"Allow Paste\" if prompted.\n" +
+                    "4️⃣ Select a server location\n" +
+                    "5️⃣ Tap the big power button to connect\n\n" +
+                    "Allow VPN permission if prompted. You're connected 🎉",
+                    parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.ConnectMenu(session.SubscriptionUrl ?? ""),
                     cancellationToken: cancellationToken);
                 break;
 
-            case MenuService.SetupInstall:
+            case MenuService.Support:
+                var supportUserDetails = await GetUserDetails(telegramId.Value, cancellationToken);
+                var supportUsername = supportUserDetails?.Username ??
+                                      (callbackQuery.From.Username is { Length: > 0 }
+                                          ? $"@{callbackQuery.From.Username}"
+                                          : $"user{telegramId.Value}");
+
+                var prefillText =
+                    $"Hi! I need help with Eagle Tunnel VPN.\n\n" +
+                    $"My username: {supportUsername}\n" +
+                    $"My Telegram ID: {telegramId.Value}";
+
                 await botClient.EditMessageText(telegramId.Value, messageId,
-                    "📲 *Step 1 — Install INCY*\n\n" +
-                    "Download and install INCY from the App Store or Play Store.\n\n" +
-                    "_If you want to set up the VPN on your PC please go back and contact the support_\n\n" +
-                    "After installing, return here and continue.",
-                    parseMode: ParseMode.Markdown, replyMarkup: MenuService.SetupMenu(),
+                    "Need help? Tap below — your username and Telegram ID are already pre-filled.",
+                    replyMarkup: MenuService.SupportMenu(_telegramOptions.SupportUrl, prefillText),
                     cancellationToken: cancellationToken);
-                break;
-
-            case MenuService.SetupImport:
-                var subscriptionUrl = session.SubscriptionUrl ?? "";
-
-                await botClient.EditMessageText(telegramId.Value, messageId,
-                    "🔗 *Step 2 — Import Subscription*\n\n" +
-                    "1️⃣ Copy the link below\n" +
-                    "2️⃣ Open INCY\n" +
-                    "3️⃣ Tap on \"Clipboard\"\n" +
-                    "Select \"Allow Paste\" if prompted.\n\n" +
-                    $"{subscriptionUrl}\n",
-                    parseMode: ParseMode.Markdown, replyMarkup: MenuService.SetupMenu(),
-                    cancellationToken: cancellationToken);
-                break;
-
-            case MenuService.SetupConnect:
-                await botClient.EditMessageText(telegramId.Value, messageId,
-                    "🚀 *Step 3 — Connect*\n\n" +
-                    "1️⃣ Select a server location\n" +
-                    "2️⃣ Tap the big power button to connect\n\n" +
-                    "Allow VPN permission if prompted.\n\n" +
-                    "You're connected 🎉",
-                    parseMode: ParseMode.Markdown, replyMarkup: MenuService.SetupMenu(),
-                    cancellationToken: cancellationToken);
-                break;
-
-            case MenuService.PreSupport:
-                await botClient.EditMessageText(telegramId.Value, messageId,
-                    "❗If your VPN is not working, please follow these steps before contacting support:\n\n" +
-                    "1️⃣ Turn on airplane mode for 10-15 seconds and turn off\n" +
-                    "2️⃣ Tap the power button to disconnect if it shows that you are connected\n" +
-                    "3️⃣ Tap on the refresh button 🔄 \n" +
-                    "4️⃣ Tap the power button to connect\n\n\n" +
-                    "If its still not working then reboot your phone and perform the above steps\n\n" +
-                    "Have you rebooted your phone?",
-                    replyMarkup: MenuService.PreSupportMenu(), cancellationToken: cancellationToken);
-                break;
-
-            case MenuService.PreSupportYes:
-                await botClient.EditMessageText(telegramId.Value, messageId,
-                    "Still not working? Another question?\n\n" +
-                    "Write to support and specify your username from the /start menu.",
-                    replyMarkup: MenuService.SupportMenu(_telegramOptions.SupportUrl),
-                    cancellationToken: cancellationToken);
-                break;
-
-            case MenuService.PreSupportNo:
-                await botClient.EditMessageText(telegramId.Value, messageId,
-                    "🔄 Please restart your phone and check the operation again.\n\n" +
-                    "When you're ready, click 🔙 Back.",
-                    replyMarkup: MenuService.PreSupportMenu(), cancellationToken: cancellationToken);
                 break;
 
             case MenuService.Subscribe:

@@ -96,14 +96,14 @@ public class TelegramHandlersTests
         return (handler, bot);
     }
 
-    private static BotUpdate TextUpdate(string text) => new()
+    private static BotUpdate TextUpdate(string text, BotUser? from = null) => new()
     {
         Message = new BotMessage
         {
             Id = 1,
             Text = text,
             Chat = new BotChat { Id = TelegramId, Type = ChatType.Private },
-            From = new BotUser { Id = TelegramId }
+            From = from ?? new BotUser { Id = TelegramId }
         }
     };
 
@@ -124,15 +124,74 @@ public class TelegramHandlersTests
     };
 
     [Fact]
-    public async Task Start_NewUser_SendsRegistrationPrompt()
+    public async Task Start_NewUser_AutoRegisters_WithSanitizedUsernameAndComment()
     {
-        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()));
+        var requests = new List<HttpRequestMessage>();
+        var getCount = 0;
 
-        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
 
-        var welcome = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
-        Assert.Contains("Welcome to Eagle Tunnel Network", welcome.Body);
-        Assert.Contains("start_registration", welcome.Body);
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+            {
+                getCount++;
+                return getCount == 1 ? Json(EmptyListJson()) : Json(ClientListJson(TestClient(enable: false)));
+            }
+
+            if (path == "/admin/panel/api/clients/add")
+            {
+                return Json(SuccessJson());
+            }
+
+            if (path == "/admin/panel/api/clients/bulkDisable")
+            {
+                return Json(SuccessJson());
+            }
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        var from = new BotUser
+        {
+            Id = TelegramId,
+            FirstName = "John 😀 Doe",
+            LastName = "Smith",
+            Username = "john_smith"
+        };
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start", from), CancellationToken.None);
+
+        Assert.Contains(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        Assert.Contains(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/bulkDisable");
+
+        var addRequest = requests.Single(r => r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        var payload = await ReadJson(addRequest);
+
+        var client = payload.GetProperty("client");
+        Assert.Equal("JohnDoeSmith", client.GetProperty("email").GetString());
+        Assert.False(client.GetProperty("enable").GetBoolean());
+        Assert.Equal(300L * 1024 * 1024 * 1024, client.GetProperty("totalGB").GetInt64());
+        Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
+        Assert.Equal("xtls-rprx-vision", client.GetProperty("flow").GetString());
+        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("password").GetString()!);
+        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("subId").GetString()!);
+        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("auth").GetString()!);
+
+        var comment = client.GetProperty("comment").GetString()!;
+        Assert.Contains("John 😀 Doe Smith", comment);
+        Assert.Contains("@john_smith", comment);
+        Assert.Contains($"Telegram ID: {TelegramId}", comment);
+
+        Assert.Equal(new[] { 1, 2 }, payload.GetProperty("inboundIds").EnumerateArray()
+            .Select(e => e.GetInt32()).ToArray());
+
+        var menu = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("Welcome to Eagle Tunnel Network", menu.Body);
+        Assert.Contains("Get VPN", menu.Body);
+        Assert.DoesNotContain("start_registration", menu.Body);
     }
 
     [Fact]
@@ -144,7 +203,8 @@ public class TelegramHandlersTests
 
         var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
         Assert.Contains("Subscription: Active", send.Body);
-        Assert.Contains("setup", send.Body);
+        Assert.Contains("Copy VPN Link", send.Body);
+        Assert.Contains("How to Connect", send.Body);
     }
 
     [Fact]
@@ -166,7 +226,7 @@ public class TelegramHandlersTests
     }
 
     [Fact]
-    public async Task Start_ExistingDisabledUser_ShowsSubscribeWithoutSetup()
+    public async Task Start_ExistingDisabledUser_ShowsGetVpnWithoutConnect()
     {
         var (handler, bot) = CreateHandler(_ => Json(ClientListJson(TestClient(enable: false))));
 
@@ -174,77 +234,37 @@ public class TelegramHandlersTests
 
         var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
         Assert.Contains("Subscription: Not Active", send.Body);
-        Assert.DoesNotContain("setup", send.Body);
+        Assert.Contains("Get VPN", send.Body);
+        Assert.DoesNotContain("Copy VPN Link", send.Body);
     }
 
     [Fact]
-    public async Task RegistrationFlow_Completes_WithAddAndBulkDisable()
-    {
-        var requests = new List<HttpRequestMessage>();
-
-        var (handler, bot) = CreateHandler(request =>
-        {
-            requests.Add(request);
-            var path = request.RequestUri!.AbsolutePath;
-
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(EmptyListJson());
-            }
-
-            if (path == "/admin/panel/api/clients/add")
-            {
-                return Json(SuccessJson());
-            }
-
-            if (path == "/admin/panel/api/clients/bulkDisable")
-            {
-                return Json(SuccessJson());
-            }
-
-            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        });
-
-        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.StartRegistration), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot, TextUpdate("John"), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot, TextUpdate("skip"), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot, TextUpdate("Doe"), CancellationToken.None);
-
-        Assert.Contains(requests,
-            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
-        Assert.Contains(requests,
-            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/bulkDisable");
-
-        var addRequest = requests.Single(r => r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
-        var payload = await ReadJson(addRequest);
-
-        var client = payload.GetProperty("client");
-        Assert.Equal("JohnDoe", client.GetProperty("email").GetString());
-        Assert.False(client.GetProperty("enable").GetBoolean());
-        Assert.Equal(300L * 1024 * 1024 * 1024, client.GetProperty("totalGB").GetInt64());
-        Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
-        Assert.Equal("xtls-rprx-vision", client.GetProperty("flow").GetString());
-        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("password").GetString()!);
-        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("subId").GetString()!);
-        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("auth").GetString()!);
-
-        Assert.Equal(new[] { 1, 2 }, payload.GetProperty("inboundIds").EnumerateArray()
-            .Select(e => e.GetInt32()).ToArray());
-
-        Assert.Contains(bot.Requests, r => r.MethodName == "sendMessage" && r.Body.Contains("Registration complete"));
-    }
-
-    [Fact]
-    public async Task SetupNavigation_EditsReplyMarkup()
+    public async Task Support_IncludesPrefillTemplate_WithUsernameAndTelegramId()
     {
         var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
 
         await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Setup), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Support), CancellationToken.None);
 
-        var editMarkup = Assert.Single(bot.Requests, r => r.MethodName == "editMessageReplyMarkup");
-        Assert.Contains("setup_install", editMarkup.Body);
+        var edit = Assert.Single(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains("Message Support"));
+        Assert.Contains("My%20username%3A%20user%40example.com", edit.Body);
+        Assert.Contains($"My%20Telegram%20ID%3A%20{TelegramId}", edit.Body);
+        Assert.Contains("text=", edit.Body);
+    }
+
+    [Fact]
+    public async Task Connect_ShowsGuide()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Connect), CancellationToken.None);
+
+        var edit = Assert.Single(bot.Requests, r => r.MethodName == "editMessageText");
+        Assert.Contains("How to Connect", edit.Body);
+        Assert.Contains("INCY", edit.Body);
+        Assert.Contains("Copy VPN Link", edit.Body);
 
         Assert.Contains(bot.Requests, r => r.MethodName == "answerCallbackQuery");
     }
@@ -340,33 +360,27 @@ public class TelegramHandlersTests
     }
 
     [Fact]
-    public async Task Back_AfterSetupInstall_RestoresMainMenuText()
+    public async Task Back_AfterConnectGuide_RestoresMainMenuText()
     {
         var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
 
         await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Setup), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.SetupInstall), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Connect), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Back), CancellationToken.None);
 
         var edits = bot.Requests.Where(r => r.MethodName == "editMessageText").ToList();
 
-        Assert.Contains(edits, r => r.Body.Contains("Install INCY"));
+        Assert.Contains(edits, r => r.Body.Contains("INCY"));
 
         var backEdit = edits.Last(r => r.Body.Contains("Subscription: Active"));
         Assert.Contains("Welcome to Eagle Tunnel Network", backEdit.Body);
-        Assert.Contains("\"subscribe\"", backEdit.Body);
-        Assert.DoesNotContain("Install INCY", backEdit.Body);
+        Assert.DoesNotContain("INCY", backEdit.Body);
     }
 
     [Theory]
     [InlineData(MenuService.Subscribe, "\"plan:monthly\"")]
-    [InlineData(MenuService.SetupInstall, "Install INCY")]
-    [InlineData(MenuService.SetupImport, "Import Subscription")]
-    [InlineData(MenuService.SetupConnect, "Connect to VPN")]
-    [InlineData(MenuService.PreSupport, "airplane mode")]
-    [InlineData(MenuService.PreSupportYes, "Still not working")]
-    [InlineData(MenuService.PreSupportNo, "restart your phone")]
+    [InlineData(MenuService.Connect, "INCY")]
+    [InlineData(MenuService.Support, "Message Support")]
     public async Task Back_FromAnySubMenu_RestoresMainMenuText(string menuCallback, string subMenuMarker)
     {
         var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
