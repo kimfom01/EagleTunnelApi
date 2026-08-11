@@ -3,6 +3,7 @@ using System.Text.Json;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
@@ -10,6 +11,8 @@ using EagleTunnelApi.Webhook.Handlers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
+
+#pragma warning disable CS0618
 
 namespace EagleTunnelApi.Tests.Webhook.Handlers;
 
@@ -95,21 +98,21 @@ public class TributeEventsHandlerTests
         {
             BotToken = "token",
             SupportUrl = "https://t.me/support",
-            TributeSubscriptionUrl = "https://tribute.test",
             DefaultInboundIds = inboundIds ?? new[] { 1, 2 },
             WebhookPath = "/webhook/telegram"
         });
 
         return new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance,
-            new PanelApiClient(new HttpClient(new StubHttpMessageHandler(request =>
-            {
-                requests?.Add(request);
-                return responder(request);
-            }))
-            {
-                BaseAddress = new Uri(BaseUri)
-            }, NullLogger<PanelApiClient>.Instance),
-            options);
+            new SubscriptionProvisioner(NullLogger<SubscriptionProvisioner>.Instance,
+                new PanelApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+                {
+                    requests?.Add(request);
+                    return responder(request);
+                }))
+                {
+                    BaseAddress = new Uri(BaseUri)
+                }, NullLogger<PanelApiClient>.Instance),
+                options));
     }
 
     private static async Task<JsonElement> ReadBodyJson(HttpRequestMessage request)

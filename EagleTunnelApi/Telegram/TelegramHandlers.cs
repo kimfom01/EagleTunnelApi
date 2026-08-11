@@ -1,6 +1,7 @@
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.TributeShop;
 using EagleTunnelApi.Webhook.Exceptions;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
@@ -17,17 +18,22 @@ public sealed class TelegramHandlers : IUpdateHandler
 
     private readonly SessionStore _sessionStore;
     private readonly IPanelClient _panelClient;
+    private readonly ITributeShopClient _tributeShopClient;
     private readonly TelegramOptions _telegramOptions;
+    private readonly TributeOptions _tributeOptions;
     private readonly string _panelBaseUri;
     private readonly ILogger<TelegramHandlers> _logger;
 
     public TelegramHandlers(SessionStore sessionStore, IPanelClient panelClient,
-        IOptions<TelegramOptions> telegramOptions, IOptions<PanelOptions> panelOptions,
+        ITributeShopClient tributeShopClient, IOptions<TelegramOptions> telegramOptions,
+        IOptions<TributeOptions> tributeOptions, IOptions<PanelOptions> panelOptions,
         ILogger<TelegramHandlers> logger)
     {
         _sessionStore = sessionStore;
         _panelClient = panelClient;
+        _tributeShopClient = tributeShopClient;
         _telegramOptions = telegramOptions.Value;
+        _tributeOptions = tributeOptions.Value;
         _panelBaseUri = panelOptions.Value.BaseUri;
         _logger = logger;
     }
@@ -110,12 +116,12 @@ public sealed class TelegramHandlers : IUpdateHandler
             telegramId, userDetails.Status);
 
         var text = BuildStatusText(userDetails);
+        activeSession.MainMenuText = text;
 
         _logger.LogInformation("Rendering start menu. TelegramId: {TelegramId}", telegramId);
 
         await botClient.SendMessage(telegramId, text,
-            replyMarkup: MenuService.MainMenu(activeSession.UserStatus, activeSession.SubscriptionUrl,
-                _telegramOptions.TributeSubscriptionUrl),
+            replyMarkup: MenuService.MainMenu(activeSession.UserStatus, activeSession.SubscriptionUrl),
             cancellationToken: cancellationToken);
     }
 
@@ -378,14 +384,132 @@ public sealed class TelegramHandlers : IUpdateHandler
                     replyMarkup: MenuService.PreSupportMenu(), cancellationToken: cancellationToken);
                 break;
 
-            case MenuService.Back:
-                await botClient.EditMessageReplyMarkup(telegramId.Value, messageId,
-                    MenuService.MainMenu(session.UserStatus, session.SubscriptionUrl,
-                        _telegramOptions.TributeSubscriptionUrl),
+            case MenuService.Subscribe:
+                await botClient.EditMessageText(telegramId.Value, messageId,
+                    "💳 *Choose a subscription plan*\n\n" +
+                    "🔄 Recurring plans charge every period — you can cancel anytime later.\n" +
+                    "⚡ The one-time plan is a single payment and your card is *not* saved.",
+                    parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.SubscriptionMenu(),
                     cancellationToken: cancellationToken);
+                break;
+
+            case MenuService.Back:
+                await EditMainMenu(botClient, telegramId.Value, messageId, cancellationToken);
+                break;
+
+            default:
+                if (data.StartsWith(SubscriptionPlans.PlanPrefix, StringComparison.Ordinal))
+                {
+                    await HandlePlanPurchase(botClient, callbackQuery, telegramId.Value, messageId, data,
+                        cancellationToken);
+                }
+
                 break;
         }
 
         await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task HandlePlanPurchase(ITelegramBotClient botClient, CallbackQuery callbackQuery, long telegramId,
+        int messageId, string data, CancellationToken cancellationToken)
+    {
+        var planKey = data[SubscriptionPlans.PlanPrefix.Length..];
+        var plan = SubscriptionPlans.ByPeriod(planKey);
+
+        if (plan is null)
+        {
+            _logger.LogWarning("Unknown plan selected. TelegramId: {TelegramId}, Data: {Data}", telegramId, data);
+
+            await botClient.EditMessageText(telegramId, messageId, "❌ Unknown plan. Please try again.",
+                replyMarkup: MenuService.SubscriptionMenu(), cancellationToken: cancellationToken);
+            return;
+        }
+
+        var request = new CreateShopOrderRequest(
+            ShopId: _tributeOptions.ShopId,
+            Amount: plan.AmountKopecks,
+            Currency: "rub",
+            Title: $"Eagle Tunnel — {plan.Title}",
+            Description: $"Eagle Tunnel Network VPN · {plan.Title}",
+            SuccessUrl: string.IsNullOrWhiteSpace(_tributeOptions.SuccessUrl) ? null : _tributeOptions.SuccessUrl,
+            FailUrl: string.IsNullOrWhiteSpace(_tributeOptions.FailUrl) ? null : _tributeOptions.FailUrl,
+            Comment: telegramId.ToString(),
+            CustomerId: telegramId.ToString(),
+            Period: plan.TributePeriod
+        );
+
+        ShopOrderResponse? order;
+        try
+        {
+            order = await _tributeShopClient.CreateOrderAsync(request, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create shop order. TelegramId: {TelegramId}, Plan: {Plan}",
+                telegramId, planKey);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                "❌ Failed to create a payment link. Please try again or contact support.",
+                replyMarkup: MenuService.SubscriptionMenu(), cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(order?.PaymentUrl) && string.IsNullOrEmpty(order?.WebappPaymentUrl))
+        {
+            _logger.LogError("Shop order created without a payment URL. TelegramId: {TelegramId}, Uuid: {Uuid}",
+                telegramId, order?.Uuid);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                "❌ Payment link is unavailable. Please try again or contact support.",
+                replyMarkup: MenuService.SubscriptionMenu(), cancellationToken: cancellationToken);
+            return;
+        }
+
+        _logger.LogInformation("Shop order created for purchase. TelegramId: {TelegramId}, Uuid: {Uuid}, Plan: {Plan}",
+            telegramId, order!.Uuid, planKey);
+
+        await botClient.EditMessageText(telegramId, messageId,
+            $"{plan.Title} — {plan.PriceRubles} ₽\n\n" +
+            "✅ Your payment link is ready! Complete the payment to activate your VPN.",
+            replyMarkup: MenuService.PaymentMenu(order?.PaymentUrl, order?.WebappPaymentUrl),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task EditMainMenu(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+
+        var userDetails = await GetUserDetails(telegramId, cancellationToken);
+
+        if (userDetails is not null)
+        {
+            session.SubscriptionUrl = userDetails.SubscriptionUrl;
+            session.UserStatus = userDetails.Status;
+
+            var freshText = BuildStatusText(userDetails);
+            session.MainMenuText = freshText;
+
+            await botClient.EditMessageText(telegramId, messageId, freshText,
+                replyMarkup: MenuService.MainMenu(userDetails.Status, userDetails.SubscriptionUrl),
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(session.MainMenuText))
+        {
+            _logger.LogWarning("Panel fetch failed on Back; restoring cached main menu. TelegramId: {TelegramId}",
+                telegramId);
+
+            await botClient.EditMessageText(telegramId, messageId, session.MainMenuText,
+                replyMarkup: MenuService.MainMenu(session.UserStatus, session.SubscriptionUrl),
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        await botClient.EditMessageText(telegramId, messageId,
+            "❌ Account not found. Please use /start to re-register.",
+            cancellationToken: cancellationToken);
     }
 }

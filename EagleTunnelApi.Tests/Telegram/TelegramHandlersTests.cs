@@ -6,6 +6,7 @@ using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
+using EagleTunnelApi.TributeShop;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -58,7 +59,8 @@ public class TelegramHandlersTests
     };
 
     private static (TelegramHandlers Handler, FakeTelegramBotClient Bot) CreateHandler(
-        Func<HttpRequestMessage, HttpResponseMessage> panelResponder)
+        Func<HttpRequestMessage, HttpResponseMessage> panelResponder,
+        Func<HttpRequestMessage, HttpResponseMessage>? shopResponder = null)
     {
         var bot = new FakeTelegramBotClient();
 
@@ -66,17 +68,29 @@ public class TelegramHandlersTests
         {
             BotToken = "token",
             SupportUrl = "https://t.me/support",
-            TributeSubscriptionUrl = "https://tribute.test",
             DefaultInboundIds = new[] { 1, 2 },
             WebhookPath = "/webhook/telegram"
+        });
+
+        var tributeOptions = Options.Create(new TributeOptions
+        {
+            ApiKey = "tribute-key",
+            BaseUri = "https://tribute.test/api/v1"
         });
 
         var panelClient = new PanelApiClient(
             new HttpClient(new StubHttpMessageHandler(panelResponder)) { BaseAddress = new Uri(PanelBaseUri) },
             NullLogger<PanelApiClient>.Instance);
 
-        var handler = new TelegramHandlers(new SessionStore(), panelClient, telegramOptions,
-            Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
+        var tributeShopClient = new TributeShopClient(
+            new HttpClient(new StubHttpMessageHandler(shopResponder ??
+                (_ => throw new InvalidOperationException("No shop responder configured"))))
+            {
+                BaseAddress = new Uri("https://tribute.test/api/v1")
+            }, NullLogger<TributeShopClient>.Instance);
+
+        var handler = new TelegramHandlers(new SessionStore(), panelClient, tributeShopClient, telegramOptions,
+            tributeOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
             NullLogger<TelegramHandlers>.Instance);
 
         return (handler, bot);
@@ -131,6 +145,24 @@ public class TelegramHandlersTests
         var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
         Assert.Contains("Subscription: Active", send.Body);
         Assert.Contains("setup", send.Body);
+    }
+
+    [Fact]
+    public async Task Start_ExistingActiveUser_ManageSubscriptionOpensNewPlanMenu()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+
+        var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("\"subscribe\"", send.Body);
+        Assert.DoesNotContain("https://tribute", send.Body);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+
+        var edit = Assert.Single(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains("plan:monthly"));
+        Assert.Contains("plan:onetime", edit.Body);
     }
 
     [Fact]
@@ -216,6 +248,181 @@ public class TelegramHandlersTests
 
         Assert.Contains(bot.Requests, r => r.MethodName == "answerCallbackQuery");
     }
+
+    [Fact]
+    public async Task Subscribe_OpensPlanMenu()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()));
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+
+        var edit = Assert.Single(bot.Requests, r => r.MethodName == "editMessageText");
+        Assert.Contains("plan:weekly", edit.Body);
+        Assert.Contains("plan:monthly", edit.Body);
+        Assert.Contains("plan:quarterly", edit.Body);
+        Assert.Contains("plan:halfyearly", edit.Body);
+        Assert.Contains("plan:yearly", edit.Body);
+        Assert.Contains("plan:onetime", edit.Body);
+    }
+
+    [Fact]
+    public async Task PlanPurchase_CreatesOrder_AndShowsPaymentLink()
+    {
+        var shopRequests = new List<HttpRequestMessage>();
+
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()),
+            shopResponder: request =>
+            {
+                shopRequests.Add(request);
+                return Json(OrderJson("https://pay.test/order-1"));
+            });
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate("plan:monthly"), CancellationToken.None);
+
+        var orderRequest = Assert.Single(shopRequests);
+        var payload = await ReadJson(orderRequest);
+
+        Assert.Equal(30000, payload.GetProperty("amount").GetInt64());
+        Assert.Equal("rub", payload.GetProperty("currency").GetString());
+        Assert.Equal("monthly", payload.GetProperty("period").GetString());
+        Assert.Equal(TelegramId.ToString(), payload.GetProperty("customerId").GetString());
+        Assert.Equal(TelegramId.ToString(), payload.GetProperty("comment").GetString());
+
+        var paymentText = Assert.Single(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains("https://pay.test/order-1"));
+        Assert.Contains("Monthly", paymentText.Body);
+        Assert.Contains("payment link is ready", paymentText.Body);
+    }
+
+    [Fact]
+    public async Task PlanPurchase_ShopOrderFails_ShowsErrorMessage()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()),
+            shopResponder: _ => new HttpResponseMessage(HttpStatusCode.BadGateway));
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate("plan:weekly"), CancellationToken.None);
+
+        var errorText = Assert.Single(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains("Failed to create a payment link"));
+        Assert.Contains("plan:weekly", errorText.Body);
+    }
+
+    [Fact]
+    public async Task PlanPurchase_UnknownPlan_ShowsError()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()));
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate("plan:nonsense"), CancellationToken.None);
+
+        var errorText = Assert.Single(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains("Unknown plan"));
+        Assert.Contains("plan:monthly", errorText.Body);
+    }
+
+    [Fact]
+    public async Task Back_RestoresMainMenuText_NotJustKeyboard()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Back), CancellationToken.None);
+
+        var mainMenuEdits = bot.Requests.Where(r => r.MethodName == "editMessageText").ToList();
+
+        var backEdit = mainMenuEdits.Last(r => r.Body.Contains("Subscription: Active"));
+        Assert.Contains("Welcome to Eagle Tunnel Network", backEdit.Body);
+        Assert.Contains("\"subscribe\"", backEdit.Body);
+        Assert.DoesNotContain("Choose a subscription plan", backEdit.Body);
+    }
+
+    [Fact]
+    public async Task Back_AfterSetupInstall_RestoresMainMenuText()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Setup), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.SetupInstall), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Back), CancellationToken.None);
+
+        var edits = bot.Requests.Where(r => r.MethodName == "editMessageText").ToList();
+
+        Assert.Contains(edits, r => r.Body.Contains("Install INCY"));
+
+        var backEdit = edits.Last(r => r.Body.Contains("Subscription: Active"));
+        Assert.Contains("Welcome to Eagle Tunnel Network", backEdit.Body);
+        Assert.Contains("\"subscribe\"", backEdit.Body);
+        Assert.DoesNotContain("Install INCY", backEdit.Body);
+    }
+
+    [Theory]
+    [InlineData(MenuService.Subscribe, "\"plan:monthly\"")]
+    [InlineData(MenuService.SetupInstall, "Install INCY")]
+    [InlineData(MenuService.SetupImport, "Import Subscription")]
+    [InlineData(MenuService.SetupConnect, "Connect to VPN")]
+    [InlineData(MenuService.PreSupport, "airplane mode")]
+    [InlineData(MenuService.PreSupportYes, "Still not working")]
+    [InlineData(MenuService.PreSupportNo, "restart your phone")]
+    public async Task Back_FromAnySubMenu_RestoresMainMenuText(string menuCallback, string subMenuMarker)
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(menuCallback), CancellationToken.None);
+
+        var subMenuEdit = Assert.Single(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains(subMenuMarker));
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Back), CancellationToken.None);
+
+        var backEdits = bot.Requests.Where(r => r.MethodName == "editMessageText")
+            .Where(r => r != subMenuEdit).ToList();
+
+        var backEdit = Assert.Single(backEdits);
+        Assert.Contains("Welcome to Eagle Tunnel Network", backEdit.Body);
+        Assert.Contains("Subscription: Active", backEdit.Body);
+        Assert.DoesNotContain(subMenuMarker, backEdit.Body);
+    }
+
+    [Fact]
+    public async Task Back_FromPaymentMenu_ReturnsToPlanMenu_NotMainMenu()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()),
+            shopResponder: _ => Json(OrderJson("https://pay.test/order-1")));
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate("plan:monthly"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Subscribe), CancellationToken.None);
+
+        var paymentEdits = bot.Requests.Where(r => r.MethodName == "editMessageText").ToList();
+
+        Assert.Contains(paymentEdits, r => r.Body.Contains("payment link is ready"));
+
+        var lastEdit = paymentEdits[^1];
+        Assert.Contains("Choose a subscription plan", lastEdit.Body);
+        Assert.Contains("\"plan:monthly\"", lastEdit.Body);
+        Assert.DoesNotContain("payment link is ready", lastEdit.Body);
+    }
+
+    private static string OrderJson(string paymentUrl) => JsonSerializer.Serialize(new ShopOrderResponse(
+        Uuid: "order-1",
+        ShopId: 1,
+        Amount: 30000,
+        Currency: "rub",
+        Title: "Eagle Tunnel — Monthly",
+        Description: "Eagle Tunnel Network VPN · Monthly",
+        Status: "paid",
+        SuccessUrl: null,
+        FailUrl: null,
+        PaymentUrl: paymentUrl,
+        WebappPaymentUrl: null,
+        CreatedAt: DateTime.UtcNow,
+        Period: "monthly"
+    ));
 
     private static async Task<JsonElement> ReadJson(HttpRequestMessage request)
     {

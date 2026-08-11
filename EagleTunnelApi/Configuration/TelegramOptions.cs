@@ -8,8 +8,6 @@ public sealed class TelegramOptions
 
     public string SupportUrl { get; set; } = string.Empty;
 
-    public string TributeSubscriptionUrl { get; set; } = string.Empty;
-
     public int[] DefaultInboundIds { get; set; } = [];
 
     public string WebhookUrl { get; set; } = string.Empty;

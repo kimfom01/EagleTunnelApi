@@ -23,6 +23,8 @@ public sealed class UserSession
     public string? SubscriptionUrl { get; set; }
 
     public SubscriptionStatus? UserStatus { get; set; }
+
+    public string? MainMenuText { get; set; }
 }
 
 public sealed class SessionStore
