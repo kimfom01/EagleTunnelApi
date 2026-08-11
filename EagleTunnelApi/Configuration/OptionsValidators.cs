@@ -28,6 +28,11 @@ public sealed class TelegramOptionsValidator(IHostEnvironment environment) : IVa
             errors.Add("Telegram:DefaultInboundIds must be comma-separated positive integers.");
         }
 
+        if (options.AdminIds.Any(id => id <= 0))
+        {
+            errors.Add("Telegram:AdminIds must be comma-separated positive Telegram ids.");
+        }
+
         if (!string.IsNullOrWhiteSpace(options.WebhookPath) && !options.WebhookPath.StartsWith('/'))
         {
             errors.Add("Telegram:WebhookPath must start with '/'.");

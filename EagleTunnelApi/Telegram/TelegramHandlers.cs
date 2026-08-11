@@ -17,8 +17,11 @@ public sealed class TelegramHandlers : IUpdateHandler
     private const long TotalGigabytes = 300L * 1024 * 1024 * 1024;
     private const string VisionFlow = "xtls-rprx-vision";
 
+    private const int AdminListPageSize = 20;
+
     private readonly SessionStore _sessionStore;
     private readonly IPanelClient _panelClient;
+    private readonly IAdminPanelService _adminPanelService;
     private readonly ITributeShopClient _tributeShopClient;
     private readonly TelegramOptions _telegramOptions;
     private readonly TributeOptions _tributeOptions;
@@ -26,12 +29,13 @@ public sealed class TelegramHandlers : IUpdateHandler
     private readonly ILogger<TelegramHandlers> _logger;
 
     public TelegramHandlers(SessionStore sessionStore, IPanelClient panelClient,
-        ITributeShopClient tributeShopClient, IOptions<TelegramOptions> telegramOptions,
-        IOptions<TributeOptions> tributeOptions, IOptions<PanelOptions> panelOptions,
-        ILogger<TelegramHandlers> logger)
+        IAdminPanelService adminPanelService, ITributeShopClient tributeShopClient,
+        IOptions<TelegramOptions> telegramOptions, IOptions<TributeOptions> tributeOptions,
+        IOptions<PanelOptions> panelOptions, ILogger<TelegramHandlers> logger)
     {
         _sessionStore = sessionStore;
         _panelClient = panelClient;
+        _adminPanelService = adminPanelService;
         _tributeShopClient = tributeShopClient;
         _telegramOptions = telegramOptions.Value;
         _tributeOptions = tributeOptions.Value;
@@ -83,6 +87,18 @@ public sealed class TelegramHandlers : IUpdateHandler
                     $"Please contact {_telegramOptions.SupportUrl} for any support requests",
                     cancellationToken: cancellationToken);
                 return;
+
+            case "/admin":
+                await ShowAdminMenu(botClient, telegramId, cancellationToken);
+                return;
+        }
+
+        var session = _sessionStore.Get(telegramId);
+
+        if (session.AdminAction != AdminAction.None && IsAdmin(telegramId))
+        {
+            await HandleAdminTextInput(botClient, telegramId, text, cancellationToken);
+            return;
         }
 
         await botClient.SendMessage(telegramId,
@@ -139,7 +155,8 @@ public sealed class TelegramHandlers : IUpdateHandler
         _logger.LogInformation("Rendering start menu. TelegramId: {TelegramId}", telegramId);
 
         await botClient.SendMessage(telegramId, text,
-            replyMarkup: MenuService.MainMenu(activeSession.UserStatus, activeSession.SubscriptionUrl),
+            replyMarkup: MenuService.MainMenu(activeSession.UserStatus, activeSession.SubscriptionUrl,
+                IsAdmin(telegramId)),
             cancellationToken: cancellationToken);
     }
 
@@ -278,6 +295,14 @@ public sealed class TelegramHandlers : IUpdateHandler
         var data = callbackQuery.Data ?? "";
         var session = _sessionStore.Get(telegramId.Value);
 
+        if (IsAdmin(telegramId.Value) &&
+            (data == MenuService.Admin || data.StartsWith(MenuService.Admin, StringComparison.Ordinal)))
+        {
+            await HandleAdminCallback(botClient, telegramId.Value, messageId, data, cancellationToken);
+            await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+            return;
+        }
+
         switch (data)
         {
             case MenuService.Connect:
@@ -405,6 +430,566 @@ public sealed class TelegramHandlers : IUpdateHandler
             cancellationToken: cancellationToken);
     }
 
+    private bool IsAdmin(long telegramId) => _telegramOptions.AdminIds.Contains(telegramId);
+
+    private async Task ShowAdminMenu(ITelegramBotClient botClient, long telegramId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsAdmin(telegramId))
+        {
+            await botClient.SendMessage(telegramId, "⛔ You are not authorized to manage the panel.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+        session.AdminTargetEmail = null;
+
+        await botClient.SendMessage(telegramId,
+            "🛠 *Admin Panel*\n\nPick an action to manage your panel.",
+            parseMode: ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task EditAdminMenu(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+        session.AdminTargetEmail = null;
+
+        await botClient.EditMessageText(telegramId, messageId,
+            "🛠 *Admin Panel*\n\nPick an action to manage your panel.",
+            parseMode: ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task HandleAdminCallback(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+
+        switch (data)
+        {
+            case MenuService.Admin:
+                await EditAdminMenu(botClient, telegramId, messageId, cancellationToken);
+                return;
+
+            case MenuService.AdminExit:
+                await EditMainMenu(botClient, telegramId, messageId, cancellationToken);
+                return;
+
+            case MenuService.AdminCancel:
+                await EditAdminMenu(botClient, telegramId, messageId, cancellationToken);
+                return;
+
+            case MenuService.AdminLookup:
+                session.AdminAction = AdminAction.Lookup;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "🔍 Enter the account's **email or Telegram ID**:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminGrant:
+                session.AdminAction = AdminAction.GrantTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "➕ Enter the account's **email or Telegram ID** to grant or extend:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminBan:
+                session.AdminAction = AdminAction.BanTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "🚫 Enter the account's **email or Telegram ID** to ban:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminUnban:
+                session.AdminAction = AdminAction.UnbanTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "✅ Enter the account's **email or Telegram ID** to unban:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminLimit:
+                session.AdminAction = AdminAction.LimitTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "📱 Enter the account's **email or Telegram ID** to change device limit:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminReset:
+                session.AdminAction = AdminAction.ResetTrafficTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "♻️ Enter the account's **email or Telegram ID** to reset traffic:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminLink:
+                session.AdminAction = AdminAction.LinkTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "🔗 Enter the existing account's **email or Telegram ID**:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminList:
+                await ShowAdminList(botClient, telegramId, messageId, 0, cancellationToken);
+                return;
+        }
+
+        if (data.StartsWith(MenuService.AdminListPrev + ":", StringComparison.Ordinal))
+        {
+            var page = int.Parse(data[(MenuService.AdminListPrev.Length + 1)..]);
+            await ShowAdminList(botClient, telegramId, messageId, page, cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminListNext + ":", StringComparison.Ordinal))
+        {
+            var page = int.Parse(data[(MenuService.AdminListNext.Length + 1)..]);
+            await ShowAdminList(botClient, telegramId, messageId, page, cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminConfirmGrant + ":", StringComparison.Ordinal))
+        {
+            await ExecuteAdminGrant(botClient, telegramId, messageId, data, cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminConfirmBan + ":", StringComparison.Ordinal))
+        {
+            await ExecuteAdminBan(botClient, telegramId, messageId, data, cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminConfirmUnban + ":", StringComparison.Ordinal))
+        {
+            await ExecuteAdminUnban(botClient, telegramId, messageId, data, cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminConfirmLimit + ":", StringComparison.Ordinal))
+        {
+            await ExecuteAdminLimit(botClient, telegramId, messageId, data, cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminConfirmReset + ":", StringComparison.Ordinal))
+        {
+            await ExecuteAdminReset(botClient, telegramId, messageId, data, cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminConfirmLink + ":", StringComparison.Ordinal))
+        {
+            await ExecuteAdminLink(botClient, telegramId, messageId, data, cancellationToken);
+            return;
+        }
+    }
+
+    private async Task HandleAdminTextInput(ITelegramBotClient botClient, long telegramId, string text,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        var input = text.Trim();
+
+        switch (session.AdminAction)
+        {
+            case AdminAction.Lookup:
+                var lookupClient = await ResolveAdminTarget(input, cancellationToken);
+
+                session.AdminAction = AdminAction.None;
+
+                if (lookupClient is null)
+                {
+                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
+                        parseMode: ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                await ShowAdminLookupResult(botClient, telegramId, lookupClient, cancellationToken);
+                return;
+
+            case AdminAction.GrantTarget:
+                var grantClient = await ResolveAdminTarget(input, cancellationToken);
+                if (grantClient is null)
+                {
+                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
+                        parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                session.AdminTargetEmail = grantClient.Email;
+                session.AdminAction = AdminAction.GrantDays;
+                await botClient.SendMessage(telegramId,
+                    $"➕ How many days to grant to **{grantClient.Email}**?", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.GrantDays:
+                if (!int.TryParse(input, out var days) || days <= 0)
+                {
+                    await botClient.SendMessage(telegramId, "❌ Invalid number of days. Please try again.",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                var grantTarget = session.AdminTargetEmail;
+                if (grantTarget is null)
+                {
+                    await ShowAdminMenu(botClient, telegramId, cancellationToken);
+                    return;
+                }
+
+                session.AdminAction = AdminAction.None;
+                session.AdminTargetEmail = null;
+
+                await botClient.SendMessage(telegramId,
+                    $"➡️ Grant **{days}** days to `{grantTarget}`?", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmGrant, $"{grantTarget}:{days}"),
+                    cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.BanTarget:
+            case AdminAction.UnbanTarget:
+            case AdminAction.ResetTrafficTarget:
+                var targetClient = await ResolveAdminTarget(input, cancellationToken);
+                if (targetClient is null)
+                {
+                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
+                        parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                var action = session.AdminAction switch
+                {
+                    AdminAction.BanTarget => MenuService.AdminConfirmBan,
+                    AdminAction.UnbanTarget => MenuService.AdminConfirmUnban,
+                    _ => MenuService.AdminConfirmReset
+                };
+                var emoji = session.AdminAction switch
+                {
+                    AdminAction.BanTarget => "🚫 Ban",
+                    AdminAction.UnbanTarget => "✅ Unban",
+                    _ => "♻️ Reset traffic"
+                };
+
+                session.AdminAction = AdminAction.None;
+                await botClient.SendMessage(telegramId,
+                    $"{emoji} `{targetClient.Email}`?", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminConfirmMenu(action, targetClient.Email),
+                    cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.LimitTarget:
+                var limitClient = await ResolveAdminTarget(input, cancellationToken);
+                if (limitClient is null)
+                {
+                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
+                        parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                session.AdminTargetEmail = limitClient.Email;
+                session.AdminAction = AdminAction.LimitValue;
+                await botClient.SendMessage(telegramId,
+                    $"📱 How many connected devices for **{limitClient.Email}**?", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.LimitValue:
+                if (!int.TryParse(input, out var limit) || limit < 0)
+                {
+                    await botClient.SendMessage(telegramId, "❌ Invalid device limit. Please try again.",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                var limitTarget = session.AdminTargetEmail;
+                if (limitTarget is null)
+                {
+                    await ShowAdminMenu(botClient, telegramId, cancellationToken);
+                    return;
+                }
+
+                session.AdminAction = AdminAction.None;
+                session.AdminTargetEmail = null;
+                await botClient.SendMessage(telegramId,
+                    $"➡️ Set device limit to **{limit}** for `{limitTarget}`?", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmLimit, $"{limitTarget}:{limit}"),
+                    cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.LinkTarget:
+                var linkClient = await ResolveAdminTarget(input, cancellationToken);
+                if (linkClient is null)
+                {
+                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
+                        parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                session.AdminTargetEmail = linkClient.Email;
+                session.AdminAction = AdminAction.LinkTelegramId;
+                await botClient.SendMessage(telegramId,
+                    $"🔗 Enter the **Telegram ID** to link to `{linkClient.Email}`:", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.LinkTelegramId:
+                if (!long.TryParse(input, out var tgId) || tgId <= 0)
+                {
+                    await botClient.SendMessage(telegramId, "❌ Invalid Telegram ID. Please try again.",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                var linkTarget = session.AdminTargetEmail;
+                if (linkTarget is null)
+                {
+                    await ShowAdminMenu(botClient, telegramId, cancellationToken);
+                    return;
+                }
+
+                session.AdminAction = AdminAction.None;
+                session.AdminTargetEmail = null;
+                await botClient.SendMessage(telegramId,
+                    $"➡️ Link `{linkTarget}` to TG `{tgId}`?", parseMode: ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmLink, $"{linkTarget}:{tgId}"),
+                    cancellationToken: cancellationToken);
+                return;
+        }
+
+        await ShowAdminMenu(botClient, telegramId, cancellationToken);
+    }
+
+    private async Task<PanelClient?> ResolveAdminTarget(string input, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _adminPanelService.GetByTargetAsync(input, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Admin target resolution failed. Target: {Target}", input);
+            return null;
+        }
+    }
+
+    private async Task ShowAdminLookupResult(ITelegramBotClient botClient, long adminId, PanelClient client,
+        CancellationToken cancellationToken)
+    {
+        var expiry = client.ExpiryTime > 0
+            ? DateTimeOffset.FromUnixTimeMilliseconds(client.ExpiryTime).ToUniversalTime().ToString("yyyy-MM-dd HH:mm")
+                + " UTC"
+            : "unlimited";
+
+        var status = client.Enable
+            ? (client.ExpiryTime > 0 && client.ExpiryTime < DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                ? "🧟 Expired"
+                : "🟢 Active")
+            : "🔴 Disabled";
+
+        await botClient.SendMessage(adminId,
+            $"*User lookup*\n\n" +
+            $"👤 Email: `{client.Email}`\n" +
+            $"🆔 Telegram ID: {(client.TgId > 0 ? client.TgId.ToString() : "—")}\n" +
+            $"📌 Status: {status}\n" +
+            $"⏳ Expires: {expiry}\n" +
+            $"📱 Devices: {client.LimitIp}\n" +
+            $"💾 Quota: {SubscriptionFormatter.FormatGigabytes(client.TotalGB)} GB\n\n" +
+            $"Account managed by panel 🔑 {client.Uuid}",
+            parseMode: ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task ShowAdminList(ITelegramBotClient botClient, long telegramId, int messageId, int page,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var clients = await _adminPanelService.ListClientsAsync(cancellationToken);
+
+            if (clients.Count == 0)
+            {
+                await botClient.EditMessageText(telegramId, messageId, "📜 No clients found.",
+                    replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+                return;
+            }
+
+            var totalPages = (int)Math.Ceiling(clients.Count / (double)AdminListPageSize);
+            page = Math.Clamp(page, 0, totalPages - 1);
+
+            var rows = clients
+                .Skip(page * AdminListPageSize)
+                .Take(AdminListPageSize)
+                .Select(c =>
+                {
+                    var status = c.Enable ? "🟢" : "🔴";
+                    var discriminator = c.SubId is { Length: > 0 } ? $" (sub: {c.SubId})" : "";
+                    return $"{status} `{c.Email}`{discriminator} tg:{c.Id}";
+                });
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"📜 *Clients* — {clients.Count} total\n\n" + string.Join("\n", rows),
+                parseMode: ParseMode.Markdown,
+                replyMarkup: MenuService.AdminListMenu(page, totalPages),
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list clients. TelegramId: {TelegramId}", telegramId);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Failed to fetch clients.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private (string Target, string Payload) ParseAdminConfirmTarget(string data, string prefix)
+    {
+        var raw = data[(prefix.Length + 1)..];
+        var separator = raw.IndexOf(':');
+        if (separator < 0)
+        {
+            return (raw, "");
+        }
+
+        return (raw[..separator], raw[(separator + 1)..]);
+    }
+
+    private async Task ExecuteAdminGrant(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var (target, payload) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmGrant);
+
+        try
+        {
+            var days = int.Parse(payload);
+            await _adminPanelService.GrantAsync(target, days, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"✅ Granted **{days}** days to `{target}`.",
+                parseMode: ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Grant failed. Target: {Target}", target);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Grant failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task ExecuteAdminBan(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var (target, _) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmBan);
+
+        try
+        {
+            await _adminPanelService.BanAsync(target, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"🚫 Banned `{target}`.", parseMode: ParseMode.Markdown,
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ban failed. Target: {Target}", target);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Ban failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task ExecuteAdminUnban(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var (target, _) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmUnban);
+
+        try
+        {
+            await _adminPanelService.UnbanAsync(target, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"✅ Unbanned `{target}`.", parseMode: ParseMode.Markdown,
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unban failed. Target: {Target}", target);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Unban failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task ExecuteAdminLimit(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var (target, payload) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmLimit);
+
+        try
+        {
+            var limit = int.Parse(payload);
+            await _adminPanelService.SetDeviceLimitAsync(target, limit, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"📱 Device limit set to **{limit}** for `{target}`.",
+                parseMode: ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Device limit change failed. Target: {Target}", target);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Device limit change failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task ExecuteAdminReset(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var (target, _) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmReset);
+
+        try
+        {
+            await _adminPanelService.ResetTrafficAsync(target, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"♻️ Traffic reset for `{target}`.", parseMode: ParseMode.Markdown,
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Traffic reset failed. Target: {Target}", target);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Traffic reset failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task ExecuteAdminLink(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var (target, payload) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmLink);
+
+        try
+        {
+            var tgId = long.Parse(payload);
+            await _adminPanelService.LinkToTelegramAsync(target, tgId, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"🔗 Linked `{target}` to TG `{tgId}`.", parseMode: ParseMode.Markdown,
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Link failed. Target: {Target}", target);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Link failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
     private async Task EditMainMenu(ITelegramBotClient botClient, long telegramId, int messageId,
         CancellationToken cancellationToken)
     {
@@ -421,7 +1006,8 @@ public sealed class TelegramHandlers : IUpdateHandler
             session.MainMenuText = freshText;
 
             await botClient.EditMessageText(telegramId, messageId, freshText,
-                replyMarkup: MenuService.MainMenu(userDetails.Status, userDetails.SubscriptionUrl),
+                replyMarkup: MenuService.MainMenu(userDetails.Status, userDetails.SubscriptionUrl,
+                    IsAdmin(telegramId)),
                 cancellationToken: cancellationToken);
             return;
         }
@@ -432,7 +1018,8 @@ public sealed class TelegramHandlers : IUpdateHandler
                 telegramId);
 
             await botClient.EditMessageText(telegramId, messageId, session.MainMenuText,
-                replyMarkup: MenuService.MainMenu(session.UserStatus, session.SubscriptionUrl),
+                replyMarkup: MenuService.MainMenu(session.UserStatus, session.SubscriptionUrl,
+                    IsAdmin(telegramId)),
                 cancellationToken: cancellationToken);
             return;
         }

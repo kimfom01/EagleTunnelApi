@@ -10,6 +10,8 @@ public sealed class TelegramOptions
 
     public int[] DefaultInboundIds { get; set; } = [];
 
+    public long[] AdminIds { get; set; } = [];
+
     public string WebhookUrl { get; set; } = string.Empty;
 
     public string WebhookPath { get; set; } = "/webhook/telegram";

@@ -41,6 +41,27 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
         return clientResponses[0];
     }
 
+    public async Task<PanelClientResponse?> GetClientByEmailAsync(string email, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Fetching Client From Panel. Email: {Email}", email);
+
+        var response = await httpClient.GetFromJsonAsync<PanelApiResponse<PanelClientResponse>>(
+            $"/admin/panel/api/clients/get/{email}", cancellationToken);
+
+        if (response is null)
+        {
+            throw new PanelApiException("Panel returned an empty response");
+        }
+
+        if (!response.Success)
+        {
+            logger.LogError("Panel fetch failed. Email: {Email}, Message: {Msg}", email, response.Msg);
+            throw new PanelApiException($"Panel fetch failed: {response.Msg}");
+        }
+
+        return response.Obj;
+    }
+
     public async Task AddClientAsync(CreateClientPayload payload, CancellationToken cancellationToken)
     {
         logger.LogInformation("Creating Client At Panel. Email: {Email}, InboundIds: {@InboundIds}",
@@ -71,6 +92,53 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
             "Disabling clients", cancellationToken);
 
         logger.LogInformation("Successfully Disabled Client(s) At Panel. Emails: {@Emails}", emailList);
+    }
+
+    public async Task BulkEnableClientsAsync(IEnumerable<string> emails, CancellationToken cancellationToken)
+    {
+        var emailList = emails.ToList();
+
+        logger.LogInformation("Enabling Client(s) At Panel. Emails: {@Emails}", emailList);
+
+        await PostAndValidateAsync("/admin/panel/api/clients/bulkEnable", new { emails = emailList },
+            "Enabling clients", cancellationToken);
+
+        logger.LogInformation("Successfully Enabled Client(s) At Panel. Emails: {@Emails}", emailList);
+    }
+
+    public async Task<IReadOnlyList<PanelClientSummary>> GetAllClientsAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Fetching All Clients From Panel");
+
+        var response = await httpClient.GetFromJsonAsync<PanelApiResponse<List<PanelClientSummary>>>(
+            "/admin/panel/api/clients/list", cancellationToken);
+
+        if (response is null)
+        {
+            throw new PanelApiException("Panel returned an empty response");
+        }
+
+        if (!response.Success)
+        {
+            logger.LogError("Panel clients list fetch failed. Message: {Msg}", response.Msg);
+            throw new PanelApiException($"Panel fetch failed: {response.Msg}");
+        }
+
+        var clients = response.Obj ?? new List<PanelClientSummary>();
+
+        logger.LogInformation("Successfully Fetched All Clients From Panel. Count: {Count}", clients.Count);
+
+        return clients;
+    }
+
+    public async Task ResetClientTrafficAsync(string email, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Resetting Client Traffic At Panel. Email: {Email}", email);
+
+        await PostAndValidateAsync($"/admin/panel/api/clients/resetTraffic/{email}", new { }, "Resetting client traffic",
+            cancellationToken);
+
+        logger.LogInformation("Successfully Reset Client Traffic At Panel. Email: {Email}", email);
     }
 
     private async Task PostAndValidateAsync(string url, object body, string action,

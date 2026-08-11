@@ -71,6 +71,7 @@ builder.Services.AddHttpClient<ITributeShopClient, TributeShopClient>((sp, clien
 builder.Services.AddSingleton<ISubscriptionProvisioner, SubscriptionProvisioner>();
 builder.Services.AddSingleton<ITributeEventsHandler, TributeEventsHandler>();
 builder.Services.AddSingleton<ITributeShopEventsHandler, TributeShopEventsHandler>();
+builder.Services.AddSingleton<IAdminPanelService, AdminPanelService>();
 
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<IUpdateHandler, TelegramHandlers>();
