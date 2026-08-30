@@ -1,8 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
+using Microsoft.Extensions.Options;
 
 namespace EagleTunnelApi.Webhook.Security;
 
@@ -11,25 +13,16 @@ public interface IVerifier
     Task<WebhookEvent?> VerifySignature(HttpRequest request);
 }
 
-public class Verifier : IVerifier
+public class Verifier(IOptions<TributeOptions> tributeOptions, ILogger<Verifier> logger) : IVerifier
 {
-    private readonly IConfiguration _config;
-    private readonly ILogger<Verifier> _logger;
-
-    public Verifier(IConfiguration config, ILogger<Verifier> logger)
-    {
-        _config = config;
-        _logger = logger;
-    }
-
     public async Task<WebhookEvent?> VerifySignature(HttpRequest request)
     {
-        _logger.LogInformation("Verifying Signature: {@Time}", DateTime.UtcNow);
+        logger.LogInformation("Verifying Signature: {@Time}", DateTime.UtcNow);
 
-        var apiKey = _config.GetValue<string>("Tribute:ApiKey");
+        var apiKey = tributeOptions.Value.ApiKey;
         if (string.IsNullOrEmpty(apiKey))
         {
-            _logger.LogError("Tribute API Key Not Found In Config: {@Time}", DateTime.UtcNow);
+            logger.LogError("Tribute API Key Not Found In Config: {@Time}", DateTime.UtcNow);
             throw new NotFoundException();
         }
 
@@ -40,22 +33,21 @@ public class Verifier : IVerifier
 
         if (!request.Headers.TryGetValue("trbt-signature", out var signatureHeader))
         {
-            _logger.LogError("Signature Not Found In Headers: {@Time}", DateTime.UtcNow);
-            throw new NotFoundException();
+            logger.LogError("Signature Not Found In Headers: {@Time}", DateTime.UtcNow);
+            throw new InvalidSignatureException();
         }
 
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(apiKey));
         var computedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(body));
-        var computedSignature = Convert.ToHexString(computedHash).ToLowerInvariant();
 
-        if (!computedSignature.Equals(signatureHeader.ToString(), StringComparison.OrdinalIgnoreCase))
+        if (!SignaturesMatch(computedHash, signatureHeader.ToString()))
         {
-            _logger.LogError("Invalid Signature: {@Time}", DateTime.UtcNow);
+            logger.LogError("Invalid Signature: {@Time}", DateTime.UtcNow);
             throw new InvalidSignatureException();
         }
 
-        _logger.LogInformation("Signature Verified: {@Time}", DateTime.UtcNow);
-        
+        logger.LogInformation("Signature Verified: {@Time}", DateTime.UtcNow);
+
         WebhookEvent? webhookEvent;
         try
         {
@@ -64,12 +56,25 @@ public class Verifier : IVerifier
         }
         catch (JsonException)
         {
-            _logger.LogError("Invalid JSON Payload: {@Time}", DateTime.UtcNow);
+            logger.LogError("Invalid JSON Payload: {@Time}", DateTime.UtcNow);
             return null;
         }
 
-        _logger.LogInformation("Webhook Event: {@WebhookEvent}", webhookEvent);
-        
+        logger.LogInformation("Webhook Event: {@WebhookEvent}", webhookEvent);
+
         return webhookEvent;
+    }
+
+    private static bool SignaturesMatch(byte[] computed, string provided)
+    {
+        try
+        {
+            var providedBytes = Convert.FromHexString(provided);
+            return CryptographicOperations.FixedTimeEquals(computed, providedBytes);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 }
