@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace EagleTunnelApi.PanelApi;
+namespace EagleTunnelApi.PanelApi.Models;
 
 public record CreateClientPayload(
     [property: JsonPropertyName("client")] CreateClientRequest Client,
@@ -14,7 +14,9 @@ public record CreateClientRequest(
     [property: JsonPropertyName("totalGB")] long TotalGB,
     [property: JsonPropertyName("tgId")] long TgId,
     [property: JsonPropertyName("comment")] string? Comment,
-    [property: JsonPropertyName("limitIp")] int LimitIp,
+    [property: JsonPropertyName("limitHwid")] int LimitHwid,
+    [property: JsonPropertyName("trafficReset")] string TrafficReset,
+    [property: JsonPropertyName("trafficResetDay")] int TrafficResetDay,
     [property: JsonPropertyName("subId")] string SubId,
     [property: JsonPropertyName("password")] string Password,
     [property: JsonPropertyName("auth")] string Auth,

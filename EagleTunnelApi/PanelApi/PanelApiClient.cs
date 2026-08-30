@@ -10,7 +10,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
     {
         logger.LogInformation("Fetching Client From Panel. TelegramId: {TelegramId}", tgId);
 
-        var response = await httpClient.GetFromJsonAsync<PanelApiResponse<List<PanelClientResponse>>>(
+        var response = await GetJsonAsync<PanelApiResponse<List<PanelClientResponse>>>(
             $"/admin/panel/api/clients/get/tgId/{tgId}", cancellationToken);
 
         if (response is null)
@@ -45,7 +45,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
     {
         logger.LogInformation("Fetching Client From Panel. Email: {Email}", email);
 
-        var response = await httpClient.GetFromJsonAsync<PanelApiResponse<PanelClientResponse>>(
+        var response = await GetJsonAsync<PanelApiResponse<PanelClientResponse>>(
             $"/admin/panel/api/clients/get/{email}", cancellationToken);
 
         if (response is null)
@@ -110,7 +110,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
     {
         logger.LogInformation("Fetching All Clients From Panel");
 
-        var response = await httpClient.GetFromJsonAsync<PanelApiResponse<List<PanelClientSummary>>>(
+        var response = await GetJsonAsync<PanelApiResponse<List<PanelClientSummary>>>(
             "/admin/panel/api/clients/list", cancellationToken);
 
         if (response is null)
@@ -139,6 +139,19 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
             cancellationToken);
 
         logger.LogInformation("Successfully Reset Client Traffic At Panel. Email: {Email}", email);
+    }
+
+    private async Task<T?> GetJsonAsync<T>(string url, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await httpClient.GetFromJsonAsync<T>(url, cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError("Panel request failed. Url: {Url}, Message: {Message}", url, ex.Message);
+            throw new PanelApiException($"Panel request failed: {ex.Message}", ex);
+        }
     }
 
     private async Task PostAndValidateAsync(string url, object body, string action,

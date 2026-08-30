@@ -1,4 +1,4 @@
-using EagleTunnelApi.PanelApi;
+using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Telegram;
 using Xunit;
 
@@ -15,8 +15,7 @@ public class SubscriptionStatusTests
     public void DeriveStatus_GivenClientState_ReturnsExpected(bool enable, long expiryTime, long totalGbBytes,
         long usedTraffic, SubscriptionStatus expected)
     {
-        var client = new PanelClient("uuid", "user@example.com", enable, expiryTime, 123, totalGbBytes, null, 0, 0,
-            null, "sub123", null, 1);
+        var client = new PanelClient("uuid", "user@example.com", enable, expiryTime, 123, totalGbBytes, null, 0, 2, "monthly", 1, 0, null, "sub123", null, 1);
 
         var status = SubscriptionFormatter.DeriveStatus(client, usedTraffic);
 
@@ -62,7 +61,7 @@ public class SubscriptionStatusTests
         var expiryMs = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds();
 
         var client = new PanelClient("uuid-x", "user@example.com", true, expiryMs, 123,
-            100L * 1024 * 1024 * 1024, "c", 3, 30, "auto", "sub777", "xtls-rprx-vision", 7);
+            100L * 1024 * 1024 * 1024, "c", 3, 2, "monthly", 1, 30, "auto", "sub777", "xtls-rprx-vision", 7);
         var response = new PanelClientResponse(client, null, new List<int> { 1 }, 42L * 1024 * 1024);
 
         var details = UserDetails.From(response, "https://panel.example.com");
@@ -77,10 +76,12 @@ public class SubscriptionStatusTests
         Assert.Equal("RESET_EVERY_30_DAYS", details.TrafficLimitStrategy);
         Assert.Equal("https://panel.example.com:2096/add/sub777", details.SubscriptionUrl);
         Assert.Equal(42L * 1024 * 1024, details.UsedTrafficBytes);
-        Assert.Equal(3, details.HwidDeviceLimit);
+        Assert.Equal(2, details.HwidDeviceLimit);
+        Assert.Equal("monthly", details.TrafficReset);
+        Assert.Equal(1, details.TrafficResetDay);
         Assert.Equal(123, details.TelegramId);
         Assert.Equal(
-            DateTimeOffset.FromUnixTimeMilliseconds(expiryMs).ToUniversalTime().ToString("o"),
+            DateTimeOffset.FromUnixTimeMilliseconds(expiryMs).ToUniversalTime(),
             details.ExpireAt);
     }
 

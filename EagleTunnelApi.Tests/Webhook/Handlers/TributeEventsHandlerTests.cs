@@ -12,8 +12,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
-#pragma warning disable CS0618
-
 namespace EagleTunnelApi.Tests.Webhook.Handlers;
 
 public class TributeEventsHandlerTests
@@ -71,6 +69,9 @@ public class TributeEventsHandlerTests
         TotalGB: 100L * 1024 * 1024 * 1024,
         Comment: "some comment",
         LimitIp: 2,
+        LimitHwid: 2,
+        TrafficReset: "monthly",
+        TrafficResetDay: 1,
         Reset: 0,
         Security: "auto",
         SubId: "sub123",
@@ -159,6 +160,7 @@ public class TributeEventsHandlerTests
         Assert.Equal(client.TotalGB, body.GetProperty("totalGB").GetInt64());
         Assert.Equal(client.Comment, body.GetProperty("comment").GetString());
         Assert.Equal(client.LimitIp, body.GetProperty("limitIp").GetInt32());
+        Assert.Equal(client.LimitHwid, body.GetProperty("limitHwid").GetInt32());
         Assert.Equal(client.Reset, body.GetProperty("reset").GetInt32());
         Assert.Equal(client.Security, body.GetProperty("security").GetString());
         Assert.Equal(client.SubId, body.GetProperty("subId").GetString());
@@ -226,7 +228,9 @@ public class TributeEventsHandlerTests
         Assert.Equal(ExpectedExpiryMs, client.GetProperty("expiryTime").GetInt64());
         Assert.Equal(TotalGigabytes, client.GetProperty("totalGB").GetInt64());
         Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
-        Assert.Equal(0, client.GetProperty("limitIp").GetInt32());
+        Assert.Equal(2, client.GetProperty("limitHwid").GetInt32());
+        Assert.Equal("monthly", client.GetProperty("trafficReset").GetString());
+        Assert.Equal(1, client.GetProperty("trafficResetDay").GetInt32());
         Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("subId").GetString()!);
         Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("password").GetString()!);
         Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("auth").GetString()!);
@@ -303,6 +307,9 @@ public class TributeEventsHandlerTests
                     TotalGB: 0,
                     Comment: "Created from subscription: Standard",
                     LimitIp: 0,
+                    LimitHwid: 2,
+                    TrafficReset: "monthly",
+                    TrafficResetDay: 1,
                     Reset: 0,
                     Security: null,
                     SubId: "sub456",

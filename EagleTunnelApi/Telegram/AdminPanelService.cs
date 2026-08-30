@@ -58,8 +58,11 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
 
         var newExpiryMs = baseDate.AddDays(days).ToUnixTimeMilliseconds();
 
-        await UpdateClient(client, enable: true, expiryTimeMs: newExpiryMs, limitIp: client.LimitIp,
-            telegramId: client.TgId, cancellationToken);
+        await panelClient.UpdateClientAsync(client.ToUpdateRequest() with
+        {
+            Enable = true,
+            ExpiryTime = newExpiryMs
+        }, cancellationToken);
 
         logger.LogInformation("Granted {Days} days to client. Email: {Email}, NewExpiry: {NewExpiry}",
             days, client.Email, newExpiryMs);
@@ -69,7 +72,7 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
     {
         var client = await RequireClient(email, cancellationToken);
 
-        await panelClient.BulkDisableClientsAsync(new[] { client.Email }, cancellationToken);
+        await panelClient.BulkDisableClientsAsync([client.Email], cancellationToken);
 
         logger.LogInformation("Banned client. Email: {Email}", client.Email);
     }
@@ -78,7 +81,7 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
     {
         var client = await RequireClient(email, cancellationToken);
 
-        await panelClient.BulkEnableClientsAsync(new[] { client.Email }, cancellationToken);
+        await panelClient.BulkEnableClientsAsync([client.Email], cancellationToken);
 
         logger.LogInformation("Unbanned client. Email: {Email}", client.Email);
     }
@@ -87,8 +90,7 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
     {
         var client = await RequireClient(email, cancellationToken);
 
-        await UpdateClient(client, enable: client.Enable, expiryTimeMs: client.ExpiryTime, limitIp: limit,
-            telegramId: client.TgId, cancellationToken);
+        await panelClient.UpdateClientAsync(client.ToUpdateRequest() with { LimitIp = limit }, cancellationToken);
 
         logger.LogInformation("Set device limit to {Limit} for client. Email: {Email}", limit, client.Email);
     }
@@ -106,8 +108,7 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
     {
         var client = await RequireClient(email, cancellationToken);
 
-        await UpdateClient(client, enable: client.Enable, expiryTimeMs: client.ExpiryTime, limitIp: client.LimitIp,
-            telegramId: telegramId, cancellationToken);
+        await panelClient.UpdateClientAsync(client.ToUpdateRequest() with { TgId = telegramId }, cancellationToken);
 
         logger.LogInformation("Linked client to telegram. Email: {Email}, TelegramId: {TelegramId}", client.Email,
             telegramId);
@@ -123,25 +124,5 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
         }
 
         return response.Client;
-    }
-
-    private async Task UpdateClient(PanelClient client, bool enable, long expiryTimeMs, int limitIp, long telegramId,
-        CancellationToken cancellationToken)
-    {
-        var updateRequest = new UpdateClientRequest(
-            Email: client.Email,
-            Enable: enable,
-            ExpiryTime: expiryTimeMs,
-            TotalGB: client.TotalGB,
-            TgId: telegramId,
-            Comment: client.Comment,
-            LimitIp: limitIp,
-            Reset: client.Reset,
-            Security: client.Security,
-            SubId: client.SubId,
-            Flow: client.Flow
-        );
-
-        await panelClient.UpdateClientAsync(updateRequest, cancellationToken);
     }
 }

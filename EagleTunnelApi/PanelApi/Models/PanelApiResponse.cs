@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace EagleTunnelApi.PanelApi;
+namespace EagleTunnelApi.PanelApi.Models;
 
 public record PanelApiResponse<T>(
     [property: JsonPropertyName("success")] bool Success,
@@ -24,9 +24,20 @@ public record PanelClient(
     [property: JsonPropertyName("totalGB")] long TotalGB,
     [property: JsonPropertyName("comment")] string? Comment,
     [property: JsonPropertyName("limitIp")] int LimitIp,
+    [property: JsonPropertyName("limitHwid")] int LimitHwid,
+    [property: JsonPropertyName("trafficReset")] string TrafficReset,
+    [property: JsonPropertyName("trafficResetDay")] int TrafficResetDay,
     [property: JsonPropertyName("reset")] int Reset,
     [property: JsonPropertyName("security")] string? Security,
     [property: JsonPropertyName("subId")] string? SubId,
     [property: JsonPropertyName("flow")] string? Flow,
     [property: JsonPropertyName("id")] int Id
 );
+
+public static class PanelClientExtensions
+{
+    public static UpdateClientRequest ToUpdateRequest(this PanelClient client) =>
+        new(client.Email, client.Enable, client.ExpiryTime, client.TotalGB, client.TgId, client.Comment,
+            client.LimitIp, client.LimitHwid, client.TrafficReset, client.TrafficResetDay,
+            client.Reset, client.Security, client.SubId, client.Flow);
+}

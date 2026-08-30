@@ -2,7 +2,6 @@ using System.Text;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
-using EagleTunnelApi.TributeShop;
 using EagleTunnelApi.Webhook.Exceptions;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
@@ -14,31 +13,23 @@ namespace EagleTunnelApi.Telegram;
 
 public sealed class TelegramHandlers : IUpdateHandler
 {
-    private const long TotalGigabytes = 300L * 1024 * 1024 * 1024;
-    private const string VisionFlow = "xtls-rprx-vision";
-
     private const int AdminListPageSize = 20;
 
     private readonly SessionStore _sessionStore;
     private readonly IPanelClient _panelClient;
     private readonly IAdminPanelService _adminPanelService;
-    private readonly ITributeShopClient _tributeShopClient;
     private readonly TelegramOptions _telegramOptions;
-    private readonly TributeOptions _tributeOptions;
     private readonly string _panelBaseUri;
     private readonly ILogger<TelegramHandlers> _logger;
 
     public TelegramHandlers(SessionStore sessionStore, IPanelClient panelClient,
-        IAdminPanelService adminPanelService, ITributeShopClient tributeShopClient,
-        IOptions<TelegramOptions> telegramOptions, IOptions<TributeOptions> tributeOptions,
+        IAdminPanelService adminPanelService, IOptions<TelegramOptions> telegramOptions,
         IOptions<PanelOptions> panelOptions, ILogger<TelegramHandlers> logger)
     {
         _sessionStore = sessionStore;
         _panelClient = panelClient;
         _adminPanelService = adminPanelService;
-        _tributeShopClient = tributeShopClient;
         _telegramOptions = telegramOptions.Value;
-        _tributeOptions = tributeOptions.Value;
         _panelBaseUri = panelOptions.Value.BaseUri;
         _logger = logger;
     }
@@ -156,7 +147,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         await botClient.SendMessage(telegramId, text,
             replyMarkup: MenuService.MainMenu(activeSession.UserStatus, activeSession.SubscriptionUrl,
-                IsAdmin(telegramId)),
+                _telegramOptions.TributeSubscriptionUrl, IsAdmin(telegramId)),
             cancellationToken: cancellationToken);
     }
 
@@ -171,7 +162,9 @@ public sealed class TelegramHandlers : IUpdateHandler
             $"🆔 ID: {userDetails.TelegramId}\n\n" +
             $"{SubscriptionFormatter.GetStatusText(userDetails.Status)}\n" +
             $"📶 Bandwidth: {usedBandwidth} GB\n" +
-            $"📱 No. of Devices Allowed: {userDetails.HwidDeviceLimit}\n\n\n\n" +
+            $"📱 Devices Allowed: {userDetails.HwidDeviceLimit}\n" +
+            $"⏳ Expires: {userDetails.ExpireAt:yyyy-MM-dd HH:mm} UTC\n" +
+            $"♻️ Traffic Reset: {userDetails.TrafficReset} — Day {userDetails.TrafficResetDay}\n\n" +
             $"VPN and unrestricted access — one subscription";
 
         if (userDetails.Status == SubscriptionStatus.Active)
@@ -261,24 +254,13 @@ public sealed class TelegramHandlers : IUpdateHandler
         var expiryTimeMs = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds();
 
         var payload = new CreateClientPayload(
-            new CreateClientRequest(
-                Email: username,
-                Enable: false,
-                ExpiryTime: expiryTimeMs,
-                TotalGB: TotalGigabytes,
-                TgId: telegramId,
-                Comment: BuildPanelComment(telegramId, from),
-                LimitIp: 0,
-                SubId: RandomString.LowerAndNum(16),
-                Password: RandomString.LowerAndNum(16),
-                Auth: RandomString.LowerAndNum(16),
-                Flow: VisionFlow
-            ),
+            PanelClientDefaults.CreateClient(username, enable: false, expiryTimeMs, telegramId,
+                BuildPanelComment(telegramId, from)),
             _telegramOptions.DefaultInboundIds.ToList()
         );
 
         await _panelClient.AddClientAsync(payload, cancellationToken);
-        await _panelClient.BulkDisableClientsAsync(new[] { username }, cancellationToken);
+        await _panelClient.BulkDisableClientsAsync([username], cancellationToken);
     }
 
     private async Task HandleCallback(ITelegramBotClient botClient, CallbackQuery callbackQuery,
@@ -307,127 +289,33 @@ public sealed class TelegramHandlers : IUpdateHandler
         {
             case MenuService.Connect:
                 await botClient.EditMessageText(telegramId.Value, messageId,
-                    "🚀 *How to Connect*\n\n" +
-                    "1️⃣ Install **INCY** from the App Store or Play Store\n" +
-                    "2️⃣ Tap **📋 Copy VPN Link** below\n" +
-                    "3️⃣ Open INCY and tap **\"Paste\"**\n" +
-                    "   Select \"Allow Paste\" if prompted.\n" +
-                    "4️⃣ Select a server location\n" +
-                    "5️⃣ Tap the big power button to connect\n\n" +
-                    "Allow VPN permission if prompted. You're connected 🎉",
-                    parseMode: ParseMode.Markdown,
-                    replyMarkup: MenuService.ConnectMenu(session.SubscriptionUrl ?? ""),
+                    "📲 *How to Connect*\n\n" +
+                    "1️⃣ Download and install INCY from the App Store or Play Store.\n\n" +
+                    "2️⃣ Import your subscription link.\n\n" +
+                    "3️⃣ Connect to a server location.\n\n" +
+                    "You're connected 🎉",
+                    parseMode: ParseMode.Markdown, replyMarkup: MenuService.ConnectMenu(session.SubscriptionUrl ?? ""),
                     cancellationToken: cancellationToken);
                 break;
 
             case MenuService.Support:
+            {
                 var supportUserDetails = await GetUserDetails(telegramId.Value, cancellationToken);
-                var supportUsername = supportUserDetails?.Username ??
-                                      (callbackQuery.From.Username is { Length: > 0 }
-                                          ? $"@{callbackQuery.From.Username}"
-                                          : $"user{telegramId.Value}");
-
-                var prefillText =
-                    $"Hi! I need help with Eagle Tunnel VPN.\n\n" +
-                    $"My username: {supportUsername}\n" +
-                    $"My Telegram ID: {telegramId.Value}";
-
+                var username = supportUserDetails?.Username ?? "";
+                var prefillText = $"My username: {username}\nMy Telegram ID: {telegramId.Value}";
                 await botClient.EditMessageText(telegramId.Value, messageId,
-                    "Need help? Tap below — your username and Telegram ID are already pre-filled.",
+                    "❗If your VPN is not working, please contact support:",
                     replyMarkup: MenuService.SupportMenu(_telegramOptions.SupportUrl, prefillText),
                     cancellationToken: cancellationToken);
                 break;
-
-            case MenuService.Subscribe:
-                await botClient.EditMessageText(telegramId.Value, messageId,
-                    "💳 *Choose a subscription plan*\n\n" +
-                    "🔄 Recurring plans charge every period — you can cancel anytime later.\n" +
-                    "⚡ The one-time plan is a single payment and your card is *not* saved.",
-                    parseMode: ParseMode.Markdown,
-                    replyMarkup: MenuService.SubscriptionMenu(),
-                    cancellationToken: cancellationToken);
-                break;
+            }
 
             case MenuService.Back:
                 await EditMainMenu(botClient, telegramId.Value, messageId, cancellationToken);
                 break;
-
-            default:
-                if (data.StartsWith(SubscriptionPlans.PlanPrefix, StringComparison.Ordinal))
-                {
-                    await HandlePlanPurchase(botClient, callbackQuery, telegramId.Value, messageId, data,
-                        cancellationToken);
-                }
-
-                break;
         }
 
         await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
-    }
-
-    private async Task HandlePlanPurchase(ITelegramBotClient botClient, CallbackQuery callbackQuery, long telegramId,
-        int messageId, string data, CancellationToken cancellationToken)
-    {
-        var planKey = data[SubscriptionPlans.PlanPrefix.Length..];
-        var plan = SubscriptionPlans.ByPeriod(planKey);
-
-        if (plan is null)
-        {
-            _logger.LogWarning("Unknown plan selected. TelegramId: {TelegramId}, Data: {Data}", telegramId, data);
-
-            await botClient.EditMessageText(telegramId, messageId, "❌ Unknown plan. Please try again.",
-                replyMarkup: MenuService.SubscriptionMenu(), cancellationToken: cancellationToken);
-            return;
-        }
-
-        var request = new CreateShopOrderRequest(
-            ShopId: _tributeOptions.ShopId,
-            Amount: plan.AmountKopecks,
-            Currency: "rub",
-            Title: $"Eagle Tunnel — {plan.Title}",
-            Description: $"Eagle Tunnel Network VPN · {plan.Title}",
-            SuccessUrl: string.IsNullOrWhiteSpace(_tributeOptions.SuccessUrl) ? null : _tributeOptions.SuccessUrl,
-            FailUrl: string.IsNullOrWhiteSpace(_tributeOptions.FailUrl) ? null : _tributeOptions.FailUrl,
-            Comment: telegramId.ToString(),
-            CustomerId: telegramId.ToString(),
-            Period: plan.TributePeriod
-        );
-
-        ShopOrderResponse? order;
-        try
-        {
-            order = await _tributeShopClient.CreateOrderAsync(request, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to create shop order. TelegramId: {TelegramId}, Plan: {Plan}",
-                telegramId, planKey);
-
-            await botClient.EditMessageText(telegramId, messageId,
-                "❌ Failed to create a payment link. Please try again or contact support.",
-                replyMarkup: MenuService.SubscriptionMenu(), cancellationToken: cancellationToken);
-            return;
-        }
-
-        if (string.IsNullOrEmpty(order?.PaymentUrl) && string.IsNullOrEmpty(order?.WebappPaymentUrl))
-        {
-            _logger.LogError("Shop order created without a payment URL. TelegramId: {TelegramId}, Uuid: {Uuid}",
-                telegramId, order?.Uuid);
-
-            await botClient.EditMessageText(telegramId, messageId,
-                "❌ Payment link is unavailable. Please try again or contact support.",
-                replyMarkup: MenuService.SubscriptionMenu(), cancellationToken: cancellationToken);
-            return;
-        }
-
-        _logger.LogInformation("Shop order created for purchase. TelegramId: {TelegramId}, Uuid: {Uuid}, Plan: {Plan}",
-            telegramId, order!.Uuid, planKey);
-
-        await botClient.EditMessageText(telegramId, messageId,
-            $"{plan.Title} — {plan.PriceRubles} ₽\n\n" +
-            "✅ Your payment link is ready! Complete the payment to activate your VPN.",
-            replyMarkup: MenuService.PaymentMenu(order?.PaymentUrl, order?.WebappPaymentUrl),
-            cancellationToken: cancellationToken);
     }
 
     private bool IsAdmin(long telegramId) => _telegramOptions.AdminIds.Contains(telegramId);
@@ -1007,7 +895,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
             await botClient.EditMessageText(telegramId, messageId, freshText,
                 replyMarkup: MenuService.MainMenu(userDetails.Status, userDetails.SubscriptionUrl,
-                    IsAdmin(telegramId)),
+                    _telegramOptions.TributeSubscriptionUrl, IsAdmin(telegramId)),
                 cancellationToken: cancellationToken);
             return;
         }
@@ -1019,7 +907,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
             await botClient.EditMessageText(telegramId, messageId, session.MainMenuText,
                 replyMarkup: MenuService.MainMenu(session.UserStatus, session.SubscriptionUrl,
-                    IsAdmin(telegramId)),
+                    _telegramOptions.TributeSubscriptionUrl, IsAdmin(telegramId)),
                 cancellationToken: cancellationToken);
             return;
         }

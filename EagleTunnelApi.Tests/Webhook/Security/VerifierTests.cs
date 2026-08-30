@@ -1,12 +1,13 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
 using EagleTunnelApi.Webhook.Security;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace EagleTunnelApi.Tests.Webhook.Security;
@@ -15,17 +16,9 @@ public class VerifierTests
 {
     private const string ApiKey = "test-secret";
 
-    private static Verifier CreateVerifier(string? apiKey = ApiKey)
-    {
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Tribute:ApiKey"] = apiKey
-            })
-            .Build();
-
-        return new Verifier(config, NullLogger<Verifier>.Instance);
-    }
+    private static Verifier CreateVerifier(string? apiKey = ApiKey) =>
+        new(Options.Create(new TributeOptions { ApiKey = apiKey ?? string.Empty }),
+            NullLogger<Verifier>.Instance);
 
     private static string ComputeSignature(string body, string key = ApiKey)
     {
@@ -85,12 +78,12 @@ public class VerifierTests
     }
 
     [Fact]
-    public async Task VerifySignature_MissingSignatureHeader_ThrowsNotFoundException()
+    public async Task VerifySignature_MissingSignatureHeader_ThrowsInvalidSignatureException()
     {
         var verifier = CreateVerifier();
         var request = CreateRequest(SampleBody, signatureHeader: null);
 
-        await Assert.ThrowsAsync<NotFoundException>(() => verifier.VerifySignature(request));
+        await Assert.ThrowsAsync<InvalidSignatureException>(() => verifier.VerifySignature(request));
     }
 
     [Fact]
@@ -98,6 +91,26 @@ public class VerifierTests
     {
         var verifier = CreateVerifier();
         var request = CreateRequest(SampleBody, "deadbeef");
+
+        await Assert.ThrowsAsync<InvalidSignatureException>(() => verifier.VerifySignature(request));
+    }
+
+    [Theory]
+    [InlineData("zzzz")]
+    [InlineData("abc")]
+    public async Task VerifySignature_MalformedHexSignature_ThrowsInvalidSignatureException(string signature)
+    {
+        var verifier = CreateVerifier();
+        var request = CreateRequest(SampleBody, signature);
+
+        await Assert.ThrowsAsync<InvalidSignatureException>(() => verifier.VerifySignature(request));
+    }
+
+    [Fact]
+    public async Task VerifySignature_SignatureForDifferentKey_ThrowsInvalidSignatureException()
+    {
+        var verifier = CreateVerifier(apiKey: "another-secret");
+        var request = CreateRequest(SampleBody, ComputeSignature(SampleBody, "other-key"));
 
         await Assert.ThrowsAsync<InvalidSignatureException>(() => verifier.VerifySignature(request));
     }

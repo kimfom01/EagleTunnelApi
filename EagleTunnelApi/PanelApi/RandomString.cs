@@ -13,14 +13,7 @@ public static class RandomString
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        var bytes = RandomNumberGenerator.GetBytes(length);
-        var chars = new char[length];
-
-        for (var i = 0; i < length; i++)
-        {
-            chars[i] = LowerAndNumChars[bytes[i] % LowerAndNumChars.Length];
-        }
-
-        return new string(chars);
+        // GetItems performs rejection sampling, avoiding the modulo bias of `bytes[i] % chars.Length`.
+        return new string(RandomNumberGenerator.GetItems<char>(LowerAndNumChars, length));
     }
 }

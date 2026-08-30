@@ -28,8 +28,6 @@ public sealed class UserSession
     public AdminAction AdminAction { get; set; } = AdminAction.None;
 
     public string? AdminTargetEmail { get; set; }
-
-    public int AdminListPage { get; set; }
 }
 
 public sealed class SessionStore

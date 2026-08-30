@@ -5,7 +5,6 @@ using EagleTunnelApi.Logging;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.ServiceDefaults;
 using EagleTunnelApi.Telegram;
-using EagleTunnelApi.TributeShop;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
 using EagleTunnelApi.Webhook.Handlers;
@@ -60,22 +59,13 @@ builder.Services.AddHttpClient("telegram_bot_client")
     })
     .AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
 
-builder.Services.AddHttpClient<ITributeShopClient, TributeShopClient>((sp, client) =>
-{
-    var tributeOptions = sp.GetRequiredService<IOptions<TributeOptions>>().Value;
-
-    client.BaseAddress = new Uri(tributeOptions.BaseUri);
-    client.DefaultRequestHeaders.TryAddWithoutValidation("Api-Key", tributeOptions.ApiKey);
-}).AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
-
 builder.Services.AddSingleton<ISubscriptionProvisioner, SubscriptionProvisioner>();
 builder.Services.AddSingleton<ITributeEventsHandler, TributeEventsHandler>();
-builder.Services.AddSingleton<ITributeShopEventsHandler, TributeShopEventsHandler>();
 builder.Services.AddSingleton<IAdminPanelService, AdminPanelService>();
 
 builder.Services.AddSingleton<SessionStore>();
-builder.Services.AddSingleton<IUpdateHandler, TelegramHandlers>();
 builder.Services.AddSingleton<TelegramHandlers>();
+builder.Services.AddSingleton<IUpdateHandler>(sp => sp.GetRequiredService<TelegramHandlers>());
 
 if (!builder.Environment.IsProduction())
 {
@@ -97,8 +87,7 @@ app.UseHttpsRedirection();
 app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
-    ITributeEventsHandler eventsHandler, ITributeShopEventsHandler shopEventsHandler,
-    CancellationToken cancellationToken) =>
+    ITributeEventsHandler eventsHandler, CancellationToken cancellationToken) =>
 {
     try
     {
@@ -118,31 +107,6 @@ app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
             case "renewed_subscription":
                 var renewedSubscription = webhookEvent.Payload.Deserialize<RenewedSubscription>();
                 await eventsHandler.HandleRenewedSubscription(renewedSubscription!, cancellationToken);
-                break;
-            case "shop_order":
-            case "shop_order_payment_received":
-                var paymentReceived = webhookEvent.Payload.Deserialize<ShopOrderEventPayload>();
-                await shopEventsHandler.HandlePaymentReceived(paymentReceived!, cancellationToken);
-                break;
-            case "shop_order_charge_success":
-                var chargeSuccess = webhookEvent.Payload.Deserialize<ShopOrderEventPayload>();
-                await shopEventsHandler.HandleChargeSuccess(chargeSuccess!, cancellationToken);
-                break;
-            case "shop_order_charge_failed":
-                var chargeFailed = webhookEvent.Payload.Deserialize<ShopOrderEventPayload>();
-                await shopEventsHandler.HandleChargeFailed(chargeFailed!, cancellationToken);
-                break;
-            case "shop_order_cancelled":
-                var cancelled = webhookEvent.Payload.Deserialize<ShopOrderEventPayload>();
-                await shopEventsHandler.HandleSubscriptionCancelled(cancelled!, cancellationToken);
-                break;
-            case "shop_order_refunded":
-                var refunded = webhookEvent.Payload.Deserialize<ShopOrderEventPayload>();
-                await shopEventsHandler.HandleRefunded(refunded!, cancellationToken);
-                break;
-            case "shop_order_payment_failed":
-                var paymentFailed = webhookEvent.Payload.Deserialize<ShopOrderEventPayload>();
-                await shopEventsHandler.HandlePaymentFailed(paymentFailed!, cancellationToken);
                 break;
             default:
                 await eventsHandler.UnhandledEvent(webhookEvent.Name);

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace EagleTunnelApi.PanelApi;
+namespace EagleTunnelApi.PanelApi.Models;
 
 public record PanelClientSummary(
     [property: JsonPropertyName("id")] int Id,

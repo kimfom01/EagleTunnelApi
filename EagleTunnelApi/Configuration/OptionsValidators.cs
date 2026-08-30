@@ -18,6 +18,11 @@ public sealed class TelegramOptionsValidator(IHostEnvironment environment) : IVa
             errors.Add("Telegram:SupportUrl is required.");
         }
 
+        if (string.IsNullOrWhiteSpace(options.TributeSubscriptionUrl))
+        {
+            errors.Add("Telegram:TributeSubscriptionUrl is required.");
+        }
+
         if (options.DefaultInboundIds is { Length: 0 })
         {
             errors.Add("Telegram:DefaultInboundIds must contain at least one inbound id.");
@@ -75,41 +80,11 @@ public sealed class TributeOptionsValidator : IValidateOptions<TributeOptions>
 {
     public ValidateOptionsResult Validate(string? name, TributeOptions options)
     {
-        var errors = new List<string>();
-
         if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
-            errors.Add("Tribute:ApiKey is required.");
+            return ValidateOptionsResult.Fail("Tribute:ApiKey is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(options.BaseUri))
-        {
-            errors.Add("Tribute:BaseUri is required.");
-        }
-        else if (!Uri.TryCreate(options.BaseUri, UriKind.Absolute, out _))
-        {
-            errors.Add("Tribute:BaseUri must be an absolute URI.");
-        }
-
-        if (options.ShopId is <= 0)
-        {
-            errors.Add("Tribute:ShopId must be a positive integer when set.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(options.SuccessUrl) &&
-            (!Uri.TryCreate(options.SuccessUrl, UriKind.Absolute, out var successUri) ||
-             successUri.Scheme != Uri.UriSchemeHttps))
-        {
-            errors.Add("Tribute:SuccessUrl must be a valid https:// URL when set.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(options.FailUrl) &&
-            (!Uri.TryCreate(options.FailUrl, UriKind.Absolute, out var failUri) ||
-             failUri.Scheme != Uri.UriSchemeHttps))
-        {
-            errors.Add("Tribute:FailUrl must be a valid https:// URL when set.");
-        }
-
-        return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
+        return ValidateOptionsResult.Success;
     }
 }

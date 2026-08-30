@@ -1,4 +1,4 @@
-using EagleTunnelApi.PanelApi;
+using EagleTunnelApi.PanelApi.Models;
 
 namespace EagleTunnelApi.Telegram;
 

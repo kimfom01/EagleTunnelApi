@@ -10,6 +10,8 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+        <!-- Explicit override for the vulnerable transitive Microsoft.OpenApi 2.0.0 (GHSA-v5pm-xwqc-g5wc). -->
+        <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
         <PackageReference Include="NSwag.AspNetCore" Version="14.7.1" />
         <PackageReference Include="Telegram.Bot" Version="22.10.2.1" />
     </ItemGroup>

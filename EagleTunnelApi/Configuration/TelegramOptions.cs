@@ -8,13 +8,15 @@ public sealed class TelegramOptions
 
     public string SupportUrl { get; set; } = string.Empty;
 
+    public string TributeSubscriptionUrl { get; set; } = string.Empty;
+
     public int[] DefaultInboundIds { get; set; } = [];
 
     public long[] AdminIds { get; set; } = [];
 
     public string WebhookUrl { get; set; } = string.Empty;
 
-    public string WebhookPath { get; set; } = "/webhook/telegram";
+    public string WebhookPath { get; set; } = "/webhooks/telegram";
 
     public string WebhookSecretToken { get; set; } = string.Empty;
 }
