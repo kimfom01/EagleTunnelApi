@@ -124,12 +124,10 @@ Handled events: `new_subscription`, `renewed_subscription`. Any other event name
 ## 3X-UI Panel Integration Details
 The service interacts with:
 - `GET /admin/panel/api/clients/get/tgId/{telegramId}`: To fetch client details by Telegram ID.
-- `POST /admin/panel/api/clients/update/{email}`: To update client expiry time and enable status.
+- `POST /admin/panel/api/clients/update/{email}`: To update client expiry time, enable status, and inbounds.
 - `POST /admin/panel/api/clients/add`: To create a client when no existing client is found for a Telegram ID, so the subscription is linked to an account rather than left orphaned.
 
-Newly created clients get a deterministic email (`tg{telegramId}`), a 300 GB quota, `xtls-rprx-vision` flow, device limits (`limitHwid`: 2), monthly traffic reset on day 1, and random credentials. Clients created via `/start` are registered disabled until the first payment activates them.
-
-When a `new_subscription` or `renewed_subscription` event references a Telegram ID with no matching panel client, the service auto-creates one so future renewals resolve correctly. Auto-creation is idempotent: if a create collides with a concurrently-created client (duplicate `tg{telegramId}` email), the service re-fetches by Telegram ID and updates the existing client instead of failing.
+All clients are created with a deterministic email (`tg{telegramId}`), a 300 GB quota, `xtls-rprx-vision` flow, device limits (`limitHwid`: 2), monthly traffic reset on day 1, random credentials, and configured inbounds. Clients created via `/start` are registered disabled until the first payment activates them. The same email pattern is used for both `/start` registration and subscription events, ensuring a single client per Telegram ID. Auto-creation is idempotent: if a create collides with a concurrently-created client (duplicate `tg{telegramId}` email), the service re-fetches by Telegram ID and updates the existing client instead of failing.
 
 Panel responses that report `"success": false` (the panel answers HTTP 200 even on failure) are treated as errors so failed panel operations surface as non-200 responses and trigger a retry rather than being silently acknowledged.
 

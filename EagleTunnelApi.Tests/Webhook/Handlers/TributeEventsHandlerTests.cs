@@ -76,7 +76,8 @@ public class TributeEventsHandlerTests
         Security: "auto",
         SubId: "sub123",
         Flow: "xtls-rprx-vision",
-        Id: 42
+        Id: 42,
+        InboundIds: null
     );
 
     private static string ClientListJson(params PanelClient[] clients)
@@ -314,7 +315,8 @@ public class TributeEventsHandlerTests
                     Security: null,
                     SubId: "sub456",
                     Flow: null,
-                    Id: 99)));
+                    Id: 99,
+                    InboundIds: null)));
             }
 
             if (path == "/admin/panel/api/clients/add")

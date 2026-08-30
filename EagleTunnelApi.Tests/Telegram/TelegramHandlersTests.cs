@@ -39,7 +39,8 @@ public class TelegramHandlersTests
         Security: "auto",
         SubId: "sub123",
         Flow: "xtls-rprx-vision",
-        Id: 1
+        Id: 1,
+        InboundIds: null
     );
 
     private static PanelClient TestClient(bool enable) => ActiveClient() with { Enable = enable };
@@ -168,7 +169,7 @@ public class TelegramHandlersTests
         var payload = await ReadJson(addRequest);
 
         var client = payload.GetProperty("client");
-        Assert.Equal("JohnDoeSmith", client.GetProperty("email").GetString());
+        Assert.Equal($"tg{TelegramId}", client.GetProperty("email").GetString());
         Assert.False(client.GetProperty("enable").GetBoolean());
         Assert.Equal(300L * 1024 * 1024 * 1024, client.GetProperty("totalGB").GetInt64());
         Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
