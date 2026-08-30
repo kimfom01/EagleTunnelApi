@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Linq;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Logging;
 using EagleTunnelApi.PanelApi;
@@ -26,6 +27,22 @@ builder.Services.Configure<JsonOptions>(options => { options.SerializerOptions.P
 builder.Services.AddOptions<TelegramOptions>()
     .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
     .ValidateOnStart();
+builder.Services.PostConfigure<TelegramOptions>(options =>
+{
+    var section = builder.Configuration.GetSection(TelegramOptions.SectionName);
+    var inboundIdsStr = section["DefaultInboundIds"];
+    if (!string.IsNullOrWhiteSpace(inboundIdsStr))
+    {
+        options.DefaultInboundIds = inboundIdsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(int.Parse).ToArray();
+    }
+    var adminIdsStr = section["AdminIds"];
+    if (!string.IsNullOrWhiteSpace(adminIdsStr))
+    {
+        options.AdminIds = adminIdsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(long.Parse).ToArray();
+    }
+});
 builder.Services.AddSingleton<IValidateOptions<TelegramOptions>, TelegramOptionsValidator>();
 
 builder.Services.AddOptions<PanelOptions>()
