@@ -16,6 +16,7 @@ public sealed record UserDetails(
     string SubscriptionUrl,
     string TrafficReset,
     int TrafficResetDay,
+    List<int>? InboundIds,
     long UsedTrafficBytes)
 {
     public static UserDetails? From(PanelClientResponse? response, string panelBaseUri)
@@ -45,6 +46,7 @@ public sealed record UserDetails(
             SubscriptionUrl: SubscriptionFormatter.BuildSubscriptionUrl(panelBaseUri, subId),
             TrafficReset: client.TrafficReset,
             TrafficResetDay: client.TrafficResetDay,
+            InboundIds: response.InboundIds,
             UsedTrafficBytes: response.UsedTraffic
         );
     }

@@ -16,5 +16,6 @@ public record UpdateClientRequest(
     [property: JsonPropertyName("reset")] int Reset,
     [property: JsonPropertyName("security")] string? Security,
     [property: JsonPropertyName("subId")] string? SubId,
-    [property: JsonPropertyName("flow")] string? Flow
+    [property: JsonPropertyName("flow")] string? Flow,
+    [property: JsonPropertyName("inboundIds")] List<int>? InboundIds
 );

@@ -104,7 +104,8 @@ public class SubscriptionProvisioner(
         var updateRequest = client.ToUpdateRequest() with
         {
             Enable = enable,
-            ExpiryTime = expiryTimeMs ?? client.ExpiryTime
+            ExpiryTime = expiryTimeMs ?? client.ExpiryTime,
+            InboundIds = _telegramOptions.DefaultInboundIds.ToList()
         };
 
         await panelClient.UpdateClientAsync(updateRequest, cancellationToken);

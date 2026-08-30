@@ -15,7 +15,7 @@ public class SubscriptionStatusTests
     public void DeriveStatus_GivenClientState_ReturnsExpected(bool enable, long expiryTime, long totalGbBytes,
         long usedTraffic, SubscriptionStatus expected)
     {
-        var client = new PanelClient("uuid", "user@example.com", enable, expiryTime, 123, totalGbBytes, null, 0, 2, "monthly", 1, 0, null, "sub123", null, 1);
+        var client = new PanelClient("uuid", "user@example.com", enable, expiryTime, 123, totalGbBytes, null, 0, 2, "monthly", 1, 0, null, "sub123", null, 1, null);
 
         var status = SubscriptionFormatter.DeriveStatus(client, usedTraffic);
 
@@ -61,7 +61,7 @@ public class SubscriptionStatusTests
         var expiryMs = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds();
 
         var client = new PanelClient("uuid-x", "user@example.com", true, expiryMs, 123,
-            100L * 1024 * 1024 * 1024, "c", 3, 2, "monthly", 1, 30, "auto", "sub777", "xtls-rprx-vision", 7);
+            100L * 1024 * 1024 * 1024, "c", 3, 2, "monthly", 1, 30, "auto", "sub777", "xtls-rprx-vision", 7, null);
         var response = new PanelClientResponse(client, null, new List<int> { 1 }, 42L * 1024 * 1024);
 
         var details = UserDetails.From(response, "https://panel.example.com");

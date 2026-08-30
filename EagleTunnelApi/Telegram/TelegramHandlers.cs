@@ -235,32 +235,50 @@ public sealed class TelegramHandlers : IUpdateHandler
 
     private async Task RegisterNewUser(long telegramId, User? from, CancellationToken cancellationToken)
     {
-        var username = SanitizePanelUsername(from?.FirstName, from?.LastName);
-        if (username.Length == 0)
+        var sanitizedName = SanitizePanelUsername(from?.FirstName, from?.LastName);
+        if (sanitizedName.Length == 0)
         {
-            username = SanitizePanelUsername(from?.Username);
+            sanitizedName = SanitizePanelUsername(from?.Username);
         }
 
-        if (username.Length == 0)
+        if (sanitizedName.Length == 0)
         {
-            username = $"user{telegramId}";
+            sanitizedName = $"user{telegramId}";
         }
 
-        if (username.Length > 32)
+        if (sanitizedName.Length > 32)
         {
-            username = username[..32];
+            sanitizedName = sanitizedName[..32];
         }
 
+        var email = $"tg{telegramId}";
         var expiryTimeMs = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds();
 
         var payload = new CreateClientPayload(
-            PanelClientDefaults.CreateClient(username, enable: false, expiryTimeMs, telegramId,
+            PanelClientDefaults.CreateClient(email, enable: false, expiryTimeMs, telegramId,
                 BuildPanelComment(telegramId, from)),
             _telegramOptions.DefaultInboundIds.ToList()
         );
 
-        await _panelClient.AddClientAsync(payload, cancellationToken);
-        await _panelClient.BulkDisableClientsAsync([username], cancellationToken);
+        try
+        {
+            await _panelClient.AddClientAsync(payload, cancellationToken);
+        }
+        catch (PanelApiException)
+        {
+            _logger.LogWarning(
+                "Creating client failed for TelegramId: {TelegramId}. Checking whether it was created concurrently.",
+                telegramId);
+
+            var existing = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
+
+            if (existing is null)
+            {
+                throw;
+            }
+        }
+
+        await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
     }
 
     private async Task HandleCallback(ITelegramBotClient botClient, CallbackQuery callbackQuery,
