@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using System.Linq;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Logging;
 using EagleTunnelApi.PanelApi;
