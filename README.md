@@ -65,18 +65,18 @@ The following `dotnet` commands are commonly used:
 ## Configuration (Environment Variables)
 Configuration is handled via standard ASP.NET Core mechanisms (`appsettings.json`, Environment Variables).
 
-| Key | Env Variable | Description |
-|-----|--------------|-------------|
-| `Tribute:ApiKey` | `Tribute__ApiKey` | HMAC key for verifying `trbt-signature`. |
+| Key | Env Variable | Description                                                                         |
+|-----|--------------|-------------------------------------------------------------------------------------|
+| `Tribute:ApiKey` | `Tribute__ApiKey` | HMAC key for verifying `trbt-signature`.                                            |
 | `Panel:BaseUri` | `Panel__BaseUri` | The base URL of your 3X-UI Panel instance (e.g. `https://panel.example.com/admin`). |
-| `Panel:ApiKey` | `Panel__ApiKey` | API token for authenticating with the Panel. |
-| `Telegram:BotToken` | `Telegram__BotToken` | Bot token from @BotFather. |
-| `Telegram:SupportUrl` | `Telegram__SupportUrl` | Support contact link shown by `/help`. |
-| `Telegram:DefaultInboundIds` | `Telegram__DefaultInboundIds` | Comma-separated inbound ids new clients are attached to. |
-| `Telegram:AdminIds` | `Telegram__AdminIds` | Comma-separated Telegram ids allowed to use `/admin`. |
-| `Telegram:WebhookPath` | `Telegram__WebhookPath` | Path of the Telegram webhook endpoint (default `/webhook/telegram`). |
-| `Telegram:WebhookUrl` | `Telegram__WebhookUrl` | Public base URL used to register the webhook (**required in production**). |
-| `Telegram:WebhookSecretToken` | `Telegram__WebhookSecretToken` | Secret token checked on every Telegram webhook request. |
+| `Panel:ApiKey` | `Panel__ApiKey` | API token for authenticating with the Panel.                                        |
+| `Telegram:BotToken` | `Telegram__BotToken` | Bot token from @BotFather.                                                          |
+| `Telegram:SupportUrl` | `Telegram__SupportUrl` | Support contact link shown by `/help`.                                              |
+| `Telegram:DefaultInboundIds` | `Telegram__DefaultInboundIds` | Comma-separated inbound ids new clients are attached to.                            |
+| `Telegram:AdminIds` | `Telegram__AdminIds` | Comma-separated Telegram ids allowed to use `/admin`.                               |
+| `Telegram:WebhookPath` | `Telegram__WebhookPath` | Path of the Telegram webhook endpoint (default `/webhooks/telegram`).               |
+| `Telegram:WebhookUrl` | `Telegram__WebhookUrl` | Public base URL used to register the webhook (**required in production**).          |
+| `Telegram:WebhookSecretToken` | `Telegram__WebhookSecretToken` | Secret token checked on every Telegram webhook request.                             |
 
 ### Example `.env` file:
 See [.env.example](.env.example) for the full list.

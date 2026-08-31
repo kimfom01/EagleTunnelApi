@@ -101,7 +101,7 @@ public class TributeEventsHandlerTests
             BotToken = "token",
             SupportUrl = "https://t.me/support",
             DefaultInboundIds = inboundIds ?? new[] { 1, 2 },
-            WebhookPath = "/webhook/telegram"
+            WebhookPath = "/webhooks/telegram"
         });
 
         return new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance,
