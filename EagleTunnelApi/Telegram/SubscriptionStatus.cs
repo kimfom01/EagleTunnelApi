@@ -51,7 +51,8 @@ public static class SubscriptionFormatter
 
     public static string BuildSubscriptionUrl(string panelBaseUri, string subId)
     {
-        var origin = new Uri(panelBaseUri).GetLeftPart(UriPartial.Authority);
-        return $"{origin}:2096/add/{subId}";
+        var uri = new Uri(panelBaseUri);
+        var host = $"{uri.Scheme}://{uri.Host}";
+        return $"{host}:2096/add/{subId}";
     }
 }

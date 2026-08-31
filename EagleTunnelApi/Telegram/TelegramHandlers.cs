@@ -705,7 +705,7 @@ public sealed class TelegramHandlers : IUpdateHandler
             $"🆔 Telegram ID: {(client.TgId > 0 ? client.TgId.ToString() : "—")}\n" +
             $"📌 Status: {status}\n" +
             $"⏳ Expires: {expiry}\n" +
-            $"📱 Devices: {client.LimitIp}\n" +
+            $"📱 Devices: {client.LimitHwid}\n" +
             $"💾 Quota: {SubscriptionFormatter.FormatGigabytes(client.TotalGB)} GB\n\n" +
             $"Account managed by panel 🔑 {client.Uuid}",
             parseMode: ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
