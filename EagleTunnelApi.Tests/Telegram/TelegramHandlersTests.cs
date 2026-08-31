@@ -520,7 +520,7 @@ public class TelegramHandlersTests
     }
 
     [Fact]
-    public async Task AdminDeviceLimit_ConfirmsAndUpdatesLimitIp()
+    public async Task AdminDeviceLimit_ConfirmsAndUpdatesLimitHwid()
     {
         var (handler, bot) = CreateHandler(request =>
         {
@@ -550,9 +550,9 @@ public class TelegramHandlersTests
         await handler.HandleUpdateAsync(bot,
             CallbackUpdate($"{MenuService.AdminConfirmLimit}:user@example.com:5"), CancellationToken.None);
 
-        var updateRequest = Assert.Single(bot.Requests,
+        var edit = Assert.Single(bot.Requests,
             r => r.MethodName == "editMessageText" && r.Body.Contains("Device limit set"));
-        Assert.Contains("5", updateRequest.Body);
+        Assert.Contains("5", edit.Body);
     }
 
     [Fact]

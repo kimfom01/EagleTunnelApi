@@ -48,6 +48,7 @@ public class SubscriptionStatusTests
     [Theory]
     [InlineData("https://panel.example.com", "sub123", "https://panel.example.com:2096/add/sub123")]
     [InlineData("https://panel.example.com/", "sub456", "https://panel.example.com:2096/add/sub456")]
+    [InlineData("https://panel.example.com:8443/admin", "sub789", "https://panel.example.com:2096/add/sub789")]
     public void BuildSubscriptionUrl_UsesOriginWithHardcodedPort(string baseUri, string subId, string expected)
     {
         var url = SubscriptionFormatter.BuildSubscriptionUrl(baseUri, subId);

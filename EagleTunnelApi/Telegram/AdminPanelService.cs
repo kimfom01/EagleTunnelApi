@@ -90,7 +90,7 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
     {
         var client = await RequireClient(email, cancellationToken);
 
-        await panelClient.UpdateClientAsync(client.ToUpdateRequest() with { LimitIp = limit }, cancellationToken);
+        await panelClient.UpdateClientAsync(client.ToUpdateRequest() with { LimitHwid = limit }, cancellationToken);
 
         logger.LogInformation("Set device limit to {Limit} for client. Email: {Email}", limit, client.Email);
     }
