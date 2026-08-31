@@ -77,7 +77,7 @@ public class TelegramHandlersTests
             SupportUrl = "https://t.me/support",
             TributeSubscriptionUrl = "https://tribute.test",
             DefaultInboundIds = new[] { 1, 2 },
-            WebhookPath = "/webhook/telegram",
+            WebhookPath = "/webhooks/telegram",
             AdminIds = adminIds ?? Array.Empty<long>()
         });
 
