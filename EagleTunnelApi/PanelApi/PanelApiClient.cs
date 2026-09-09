@@ -13,10 +13,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
         var response = await GetJsonAsync<PanelApiResponse<List<PanelClientResponse>>>(
             $"/admin/panel/api/clients/get/tgId/{tgId}", cancellationToken);
 
-        if (response is null)
-        {
-            throw new PanelApiException("Panel returned an empty response");
-        }
+        if (response is null) throw new PanelApiException("Panel returned an empty response");
 
         if (!response.Success)
         {
@@ -48,10 +45,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
         var response = await GetJsonAsync<PanelApiResponse<PanelClientResponse>>(
             $"/admin/panel/api/clients/get/{email}", cancellationToken);
 
-        if (response is null)
-        {
-            throw new PanelApiException("Panel returned an empty response");
-        }
+        if (response is null) throw new PanelApiException("Panel returned an empty response");
 
         if (!response.Success)
         {
@@ -72,11 +66,17 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
         logger.LogInformation("Successfully Created Client At Panel. Email: {Email}", payload.Client.Email);
     }
 
-    public async Task UpdateClientAsync(UpdateClientRequest request, CancellationToken cancellationToken)
+    public Task UpdateClientAsync(UpdateClientRequest request, CancellationToken cancellationToken)
+    {
+        return UpdateClientAsync(request.Email, request, cancellationToken);
+    }
+
+    public async Task UpdateClientAsync(string keyEmail, UpdateClientRequest request,
+        CancellationToken cancellationToken)
     {
         logger.LogInformation("Updating Client At Panel. Email: {Email}", request.Email);
 
-        await PostAndValidateAsync($"/admin/panel/api/clients/update/{request.Email}", request, "Updating client",
+        await PostAndValidateAsync($"/admin/panel/api/clients/update/{keyEmail}", request, "Updating client",
             cancellationToken);
 
         logger.LogInformation("Successfully Updated Client At Panel. Email: {Email}", request.Email);
@@ -113,10 +113,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
         var response = await GetJsonAsync<PanelApiResponse<List<PanelClientSummary>>>(
             "/admin/panel/api/clients/list", cancellationToken);
 
-        if (response is null)
-        {
-            throw new PanelApiException("Panel returned an empty response");
-        }
+        if (response is null) throw new PanelApiException("Panel returned an empty response");
 
         if (!response.Success)
         {
@@ -135,7 +132,8 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
     {
         logger.LogInformation("Resetting Client Traffic At Panel. Email: {Email}", email);
 
-        await PostAndValidateAsync($"/admin/panel/api/clients/resetTraffic/{email}", new { }, "Resetting client traffic",
+        await PostAndValidateAsync($"/admin/panel/api/clients/resetTraffic/{email}", new { },
+            "Resetting client traffic",
             cancellationToken);
 
         logger.LogInformation("Successfully Reset Client Traffic At Panel. Email: {Email}", email);
@@ -162,16 +160,15 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
         PanelApiResponse<object>? apiResponse = null;
         if (responseMessage.Content.Headers.ContentType?.MediaType?.Contains("json", StringComparison.OrdinalIgnoreCase)
             is true)
-        {
             try
             {
-                apiResponse = await responseMessage.Content.ReadFromJsonAsync<PanelApiResponse<object>>(cancellationToken);
+                apiResponse =
+                    await responseMessage.Content.ReadFromJsonAsync<PanelApiResponse<object>>(cancellationToken);
             }
             catch (JsonException)
             {
                 apiResponse = null;
             }
-        }
 
         if (!responseMessage.IsSuccessStatusCode || apiResponse is null || !apiResponse.Success)
         {

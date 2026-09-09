@@ -1,5 +1,7 @@
+using Projects;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
-builder.AddProject<Projects.EagleTunnelApi>("eagletunnelapi");
+builder.AddProject<EagleTunnelApi>("eagletunnelapi");
 
 builder.Build().Run();

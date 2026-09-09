@@ -53,7 +53,7 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
             : DateTimeOffset.MinValue;
 
         var baseDate = client.Enable
-            ? (currentExpiry > nowUtc ? currentExpiry : nowUtc)
+            ? currentExpiry > nowUtc ? currentExpiry : nowUtc
             : nowUtc;
 
         var newExpiryMs = baseDate.AddDays(days).ToUnixTimeMilliseconds();
@@ -118,10 +118,7 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
     {
         var response = await panelClient.GetClientByEmailAsync(email, cancellationToken);
 
-        if (response?.Client is null)
-        {
-            throw new PanelApiException($"No client found for email {email}.");
-        }
+        if (response?.Client is null) throw new PanelApiException($"No client found for email {email}.");
 
         return response.Client;
     }

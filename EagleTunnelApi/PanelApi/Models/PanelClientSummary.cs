@@ -7,11 +7,15 @@ public record PanelClientSummary(
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("subId")] string? SubId,
     [property: JsonPropertyName("uuid")] string? Uuid,
-    [property: JsonPropertyName("totalGB")] long TotalGB,
-    [property: JsonPropertyName("expiryTime")] long ExpiryTime,
+    [property: JsonPropertyName("totalGB")]
+    long TotalGB,
+    [property: JsonPropertyName("expiryTime")]
+    long ExpiryTime,
     [property: JsonPropertyName("enable")] bool Enable,
-    [property: JsonPropertyName("inboundIds")] List<int>? InboundIds,
-    [property: JsonPropertyName("traffic")] PanelTrafficSummary? Traffic
+    [property: JsonPropertyName("inboundIds")]
+    List<int>? InboundIds,
+    [property: JsonPropertyName("traffic")]
+    PanelTrafficSummary? Traffic
 );
 
 public record PanelTrafficSummary(

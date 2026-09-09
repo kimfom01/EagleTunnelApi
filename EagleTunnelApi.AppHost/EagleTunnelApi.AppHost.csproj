@@ -6,14 +6,16 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <UserSecretsId>70689f9f-b820-4b96-954f-25b3d6ae85ef</UserSecretsId>
+        <!-- No Aspire CLI-bundle features in use; keep plain 'dotnet run' orchestration. -->
+        <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\EagleTunnelApi\EagleTunnelApi.csproj" />
+        <ProjectReference Include="..\EagleTunnelApi\EagleTunnelApi.csproj"/>
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Aspire.Hosting.AppHost" Version="13.4.6" />
+        <PackageReference Include="Aspire.Hosting.AppHost" Version="13.5.3" />
     </ItemGroup>
 
 </Project>

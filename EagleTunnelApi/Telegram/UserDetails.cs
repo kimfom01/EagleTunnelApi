@@ -17,37 +17,43 @@ public sealed record UserDetails(
     string TrafficReset,
     int TrafficResetDay,
     List<int>? InboundIds,
-    long UsedTrafficBytes)
+    long UsedTrafficBytes,
+    bool Enable,
+    long ExpiryTimeMs)
 {
     public static UserDetails? From(PanelClientResponse? response, string panelBaseUri)
     {
-        if (response is null)
-        {
-            return null;
-        }
+        if (response is null) return null;
 
         var client = response.Client;
         var status = SubscriptionFormatter.DeriveStatus(client, response.UsedTraffic);
         var subId = client.SubId ?? "";
 
         return new UserDetails(
-            Uuid: client.Uuid,
-            Id: client.Id,
-            SubId: subId,
-            Username: client.Email,
-            Status: status,
-            TrafficLimitBytes: client.TotalGB,
-            TrafficLimitStrategy: SubscriptionFormatter.GetTrafficLimitStrategy(client.Reset),
-            ExpireAt: client.ExpiryTime > 0
+            client.Uuid,
+            client.Id,
+            subId,
+            client.Email,
+            status,
+            client.TotalGB,
+            SubscriptionFormatter.GetTrafficLimitStrategy(client.Reset),
+            client.ExpiryTime > 0
                 ? DateTimeOffset.FromUnixTimeMilliseconds(client.ExpiryTime).ToUniversalTime()
                 : DateTimeOffset.UtcNow.AddYears(100),
-            TelegramId: client.TgId,
-            HwidDeviceLimit: client.LimitHwid,
-            SubscriptionUrl: SubscriptionFormatter.BuildSubscriptionUrl(panelBaseUri, subId),
-            TrafficReset: client.TrafficReset,
-            TrafficResetDay: client.TrafficResetDay,
-            InboundIds: response.InboundIds,
-            UsedTrafficBytes: response.UsedTraffic
+            client.TgId,
+            client.LimitHwid,
+            SubscriptionFormatter.BuildSubscriptionUrl(panelBaseUri, subId),
+            client.TrafficReset,
+            client.TrafficResetDay,
+            response.InboundIds,
+            response.UsedTraffic,
+            client.Enable,
+            client.ExpiryTime
         );
+    }
+
+    public bool HasEverBeenProvisioned()
+    {
+        return Enable || ExpiryTimeMs <= DateTimeOffset.UtcNow.AddYears(50).ToUnixTimeMilliseconds();
     }
 }

@@ -38,7 +38,7 @@ public class SubscriptionProvisioner(
             return;
         }
 
-        await UpdateClientAsync(client, enable: false, expiryTimeMs: null, cancellationToken);
+        await UpdateClientAsync(client, false, null, cancellationToken);
 
         logger.LogInformation("Client disabled. Email: {Email}, TelegramId: {TelegramId}", client.Email, telegramId);
     }
@@ -50,7 +50,7 @@ public class SubscriptionProvisioner(
 
         var email = $"tg{telegramId}";
         var createRequest = new CreateClientPayload(
-            PanelClientDefaults.CreateClient(email, enable: true, expiryTimeMs, telegramId,
+            PanelClientDefaults.CreateClient(email, true, expiryTimeMs, telegramId,
                 $"Created from subscription: {subscriptionName}"),
             _telegramOptions.DefaultInboundIds.ToList()
         );
@@ -67,7 +67,7 @@ public class SubscriptionProvisioner(
 
         if (client is not null)
         {
-            await UpdateClientAsync(client, enable: true, expiryTimeMs, cancellationToken);
+            await UpdateClientAsync(client, true, expiryTimeMs, cancellationToken);
             return;
         }
 
@@ -83,12 +83,9 @@ public class SubscriptionProvisioner(
 
             client = await FetchClientByTelegramId(telegramId, cancellationToken);
 
-            if (client is null)
-            {
-                throw;
-            }
+            if (client is null) throw;
 
-            await UpdateClientAsync(client, enable: true, expiryTimeMs, cancellationToken);
+            await UpdateClientAsync(client, true, expiryTimeMs, cancellationToken);
         }
     }
 
@@ -101,10 +98,18 @@ public class SubscriptionProvisioner(
     private async Task UpdateClientAsync(PanelClient client, bool enable, long? expiryTimeMs,
         CancellationToken cancellationToken)
     {
+        var resolvedExpiry = expiryTimeMs;
+
+        if (expiryTimeMs.HasValue)
+        {
+            var creditMs = (long)ReferralService.GetCreditDays(client.Comment) * 24 * 60 * 60 * 1000;
+            resolvedExpiry = expiryTimeMs.Value + creditMs;
+        }
+
         var updateRequest = client.ToUpdateRequest() with
         {
             Enable = enable,
-            ExpiryTime = expiryTimeMs ?? client.ExpiryTime,
+            ExpiryTime = resolvedExpiry ?? client.ExpiryTime,
             InboundIds = _telegramOptions.DefaultInboundIds.ToList()
         };
 

@@ -17,19 +17,22 @@ public static class PanelClientDefaults
     public const int CredentialsLength = 16;
 
     public static CreateClientRequest CreateClient(string email, bool enable, long expiryTimeMs, long tgId,
-        string? comment) => new(
-        Email: email,
-        Enable: enable,
-        ExpiryTime: expiryTimeMs,
-        TotalGB: TotalGigabytes,
-        TgId: tgId,
-        Comment: comment,
-        LimitHwid: HwidLimit,
-        TrafficReset: TrafficReset,
-        TrafficResetDay: TrafficResetDay,
-        SubId: RandomString.LowerAndNum(CredentialsLength),
-        Password: RandomString.LowerAndNum(CredentialsLength),
-        Auth: RandomString.LowerAndNum(CredentialsLength),
-        Flow: VisionFlow
-    );
+        string? comment)
+    {
+        return new CreateClientRequest(
+            email,
+            enable,
+            expiryTimeMs,
+            TotalGigabytes,
+            tgId,
+            comment,
+            HwidLimit,
+            TrafficReset,
+            TrafficResetDay,
+            RandomString.LowerAndNum(CredentialsLength),
+            RandomString.LowerAndNum(CredentialsLength),
+            RandomString.LowerAndNum(CredentialsLength),
+            VisionFlow
+        );
+    }
 }

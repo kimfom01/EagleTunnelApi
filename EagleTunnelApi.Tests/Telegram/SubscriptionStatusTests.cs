@@ -15,7 +15,8 @@ public class SubscriptionStatusTests
     public void DeriveStatus_GivenClientState_ReturnsExpected(bool enable, long expiryTime, long totalGbBytes,
         long usedTraffic, SubscriptionStatus expected)
     {
-        var client = new PanelClient("uuid", "user@example.com", enable, expiryTime, 123, totalGbBytes, null, 0, 2, "monthly", 1, 0, null, "sub123", null, 1, null);
+        var client = new PanelClient("uuid", "user@example.com", enable, expiryTime, 123, totalGbBytes, null, 0, 2,
+            "monthly", 1, 0, null, "sub123", null, 1, null);
 
         var status = SubscriptionFormatter.DeriveStatus(client, usedTraffic);
 

@@ -31,16 +31,12 @@ builder.Services.PostConfigure<TelegramOptions>(options =>
     var section = builder.Configuration.GetSection(TelegramOptions.SectionName);
     var inboundIdsStr = section["DefaultInboundIds"];
     if (!string.IsNullOrWhiteSpace(inboundIdsStr))
-    {
         options.DefaultInboundIds = inboundIdsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(int.Parse).ToArray();
-    }
     var adminIdsStr = section["AdminIds"];
     if (!string.IsNullOrWhiteSpace(adminIdsStr))
-    {
         options.AdminIds = adminIdsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(long.Parse).ToArray();
-    }
 });
 builder.Services.AddSingleton<IValidateOptions<TelegramOptions>, TelegramOptionsValidator>();
 
@@ -83,10 +79,9 @@ builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<TelegramHandlers>();
 builder.Services.AddSingleton<IUpdateHandler>(sp => sp.GetRequiredService<TelegramHandlers>());
 
-if (!builder.Environment.IsProduction())
-{
-    builder.Services.AddHostedService<TelegramPollingService>();
-}
+if (!builder.Environment.IsProduction()) builder.Services.AddHostedService<TelegramPollingService>();
+
+builder.Services.AddHostedService<ExpiryReminderService>();
 
 var app = builder.Build();
 
@@ -109,10 +104,7 @@ app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
     {
         var webhookEvent = await verifier.VerifySignature(request);
 
-        if (webhookEvent is null)
-        {
-            throw new InvalidPayloadException();
-        }
+        if (webhookEvent is null) throw new InvalidPayloadException();
 
         switch (webhookEvent.Name)
         {
@@ -123,6 +115,10 @@ app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
             case "renewed_subscription":
                 var renewedSubscription = webhookEvent.Payload.Deserialize<RenewedSubscription>();
                 await eventsHandler.HandleRenewedSubscription(renewedSubscription!, cancellationToken);
+                break;
+            case "cancelled_subscription":
+                var cancelledSubscription = webhookEvent.Payload.Deserialize<CancelledSubscription>();
+                await eventsHandler.HandleCancelledSubscription(cancelledSubscription!, cancellationToken);
                 break;
             default:
                 await eventsHandler.UnhandledEvent(webhookEvent.Name);
@@ -154,9 +150,7 @@ app.MapPost(telegramOptions.WebhookPath, async (HttpRequest request, IUpdateHand
 
     if (!string.IsNullOrEmpty(configuredSecretToken) &&
         !request.Headers["X-Telegram-Bot-Api-Secret-Token"].Equals(configuredSecretToken))
-    {
         return Results.Unauthorized();
-    }
 
     Update? update;
     try
@@ -168,10 +162,7 @@ app.MapPost(telegramOptions.WebhookPath, async (HttpRequest request, IUpdateHand
         return Results.BadRequest("Invalid JSON payload");
     }
 
-    if (update is null)
-    {
-        return Results.BadRequest("Invalid body");
-    }
+    if (update is null) return Results.BadRequest("Invalid body");
 
     await updateHandler.HandleUpdateAsync(botClient, update, cancellationToken);
 
@@ -185,9 +176,12 @@ if (app.Environment.IsProduction())
     var webhookEndpoint = new Uri(new Uri(telegramOptions.WebhookUrl), telegramOptions.WebhookPath).ToString();
 
     await botClient.SetWebhook(webhookEndpoint,
-        secretToken: string.IsNullOrEmpty(telegramOptions.WebhookSecretToken) ? null : telegramOptions.WebhookSecretToken);
+        secretToken: string.IsNullOrEmpty(telegramOptions.WebhookSecretToken)
+            ? null
+            : telegramOptions.WebhookSecretToken);
 
-    app.Services.GetRequiredService<ILogger<EagleTunnelApi.Program>>().LogInformation("Telegram webhook set to {WebhookEndpoint}",
+    app.Services.GetRequiredService<ILogger<EagleTunnelApi.Program>>().LogInformation(
+        "Telegram webhook set to {WebhookEndpoint}",
         webhookEndpoint);
 }
 

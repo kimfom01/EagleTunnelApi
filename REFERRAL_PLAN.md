@@ -36,7 +36,7 @@ Email-based referral system for the EagleTunnel Telegram bot + 3X-UI panel + Tri
 - `Telegram/MenuService.cs:34-59` — no referral button.
 - `Configuration/TelegramOptions.cs` — no `BotUsername` / bonus / video config yet.
 - `Telegram/AdminPanelService.cs:46-69 GrantAsync` — grant-by-days; reuse for +30d.
-- `Webhook/Handlers/TributeEventsHandler.cs` — handles `new/renewed_subscription`; `cancelledSubscription` exists in Tribute docs but falls into `UnhandledEvent` in `Program.cs`.
+- `Webhook/Handlers/TributeEventsHandler.cs` — handles `new/renewed_subscription`; the `cancelled_subscription` event exists in Tribute but falls into `UnhandledEvent` in `Program.cs`.
 - `Telegram/SubscriptionProvisioner.cs:23-29 ActivateAsync`, `101-112 UpdateClientAsync` — **sets** expiry = Tribute `expires_at` on every activation (would wipe a bonus; must become credit-aware, §5).
 - `SubscriptionProvisioner.cs:46-61 CreateClient` fallback creates legacy `tg{id}` accounts — keep; they self-heal via migration.
 - Support flow: `SupportMenu` deep-links out to `SupportUrl` (external human chat); bot never sees those messages.
@@ -73,7 +73,7 @@ Email-based referral system for the EagleTunnel Telegram bot + 3X-UI panel + Tri
 ## 6. Cancellations + reminders (win-back loop)
 - New `CancelledSubscription` webhook model + handler in `Program.cs`: tag `Cancelled <date>`; clear it (plus reminder markers) on any later `new/renewed`.
 - New `ExpiryReminderService : BackgroundService` (daily, e.g. 09:00 UTC, all envs): `GetAllClientsAsync` → skip legacy `^tg\d+$` → skip untagged (active payers never nagged) → `daysUntilExpiry ∈ {3,2,1,0}` + marker `Reminder Nd sent <date>` absent → `SendMessage(tgId, …resubscribe: <TributeSubscriptionUrl>… + "need help cancelling? message support for the video guide" support button)` → write marker via `UpdateClientAsync`.
-- First-deploy safety: log-and-acknowledge raw `cancelledSubscription` shape once (only `telegram_user_id` needed).
+- First-deploy safety: log-and-acknowledge the raw `cancelled_subscription` shape once (only `telegram_user_id` needed).
 
 ## 7. Cancel video guide (TEMPORARY, support-owned)
 - The video is **sent by support humans, never by the bot** — no `sendVideo` code, no video config. Support keeps it as a canned/quick reply (Saved Messages) and forwards it whenever a user asks how to cancel.
@@ -109,3 +109,11 @@ Email-based referral system for the EagleTunnel Telegram bot + 3X-UI panel + Tri
 - Ledger tags read as credit history and migrate into a balance table.
 - Reminder trigger ("service ends in N days + no active billing") is the same trigger credits need ("balance covers until X — top up?").
 - Retire as one unit: Tribute cancel flow + video + cancel webhook + reminder copy.
+
+## 12. Implementation notes (built 2026-09-09, all 131 tests green)
+- Email max length is **254** (RFC), not 64 as originally sketched.
+- Panel email lookup failure is treated as **available**: the panel reports unknown emails as `success:false`, indistinguishable from transport errors; the create/update call is authoritative and fails safely on true duplicates.
+- New `IPanelClient.UpdateClientAsync(keyEmail, request, ct)` overload so in-place email migration posts to `/update/{oldEmail}` with the new address in the body.
+- Referral credit is applied in `SubscriptionProvisioner` on the **activation path only**; the disable path keeps the stored expiry untouched (no double-count).
+- `cancelled_subscription` shape verified against Tribute docs (incl. string `trb_user_id`, integer `price`/`amount`); handler stays lenient (ack + warn on missing ids).
+- Follow-ups (built): `/admin` lookup shows referrer / credit / cancel state; `/admin` → `📨 Send Reminder` fires the reminder DM instantly for any linked account (same text + marker logic as the daily job).

@@ -12,6 +12,8 @@ public interface IPanelClient
 
     Task UpdateClientAsync(UpdateClientRequest request, CancellationToken cancellationToken);
 
+    Task UpdateClientAsync(string keyEmail, UpdateClientRequest request, CancellationToken cancellationToken);
+
     Task BulkDisableClientsAsync(IEnumerable<string> emails, CancellationToken cancellationToken);
 
     Task BulkEnableClientsAsync(IEnumerable<string> emails, CancellationToken cancellationToken);

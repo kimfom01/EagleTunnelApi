@@ -19,66 +19,75 @@ public class TributeEventsHandlerTests
     private const string BaseUri = "https://panel.test";
     private const long TelegramId = 12345;
 
+    private const long TotalGigabytes = 300L * 1024 * 1024 * 1024;
+
     private static readonly DateTime ExpiresAt = new(2026, 1, 28, 10, 0, 0, DateTimeKind.Utc);
 
     private static readonly long ExpectedExpiryMs =
         new DateTimeOffset(ExpiresAt.AddHours(1)).ToUnixTimeMilliseconds();
 
-    private const long TotalGigabytes = 300L * 1024 * 1024 * 1024;
+    private static NewSubscription NewSubscriptionEvent(long telegramUserId = TelegramId)
+    {
+        return new NewSubscription(
+            "Standard",
+            1,
+            2,
+            "monthly",
+            "new",
+            9.99m,
+            9.99m,
+            "USD",
+            7,
+            telegramUserId,
+            3,
+            "channel",
+            ExpiresAt
+        );
+    }
 
-    private static NewSubscription NewSubscriptionEvent(long telegramUserId = TelegramId) => new(
-        SubscriptionName: "Standard",
-        SubscriptionId: 1,
-        PeriodId: 2,
-        Period: "monthly",
-        Type: "new",
-        Price: 9.99m,
-        Amount: 9.99m,
-        Currency: "USD",
-        UserId: 7,
-        TelegramUserId: telegramUserId,
-        ChannelId: 3,
-        ChannelName: "channel",
-        ExpiresAt: ExpiresAt
-    );
+    private static RenewedSubscription RenewedSubscriptionEvent(long telegramUserId = TelegramId)
+    {
+        return new RenewedSubscription(
+            "Standard",
+            1,
+            2,
+            "monthly",
+            9.99m,
+            9.99m,
+            "USD",
+            7,
+            telegramUserId,
+            "user@example.com",
+            "https://t.me/app",
+            3,
+            "channel",
+            ExpiresAt,
+            "renewed"
+        );
+    }
 
-    private static RenewedSubscription RenewedSubscriptionEvent(long telegramUserId = TelegramId) => new(
-        SubscriptionName: "Standard",
-        SubscriptionId: 1,
-        PeriodId: 2,
-        Period: "monthly",
-        Price: 9.99m,
-        Amount: 9.99m,
-        Currency: "USD",
-        UserId: 7,
-        TelegramUserId: telegramUserId,
-        Email: "user@example.com",
-        WebAppLink: "https://t.me/app",
-        ChannelId: 3,
-        ChannelName: "channel",
-        ExpiresAt: ExpiresAt,
-        Type: "renewed"
-    );
-
-    private static PanelClient SampleClient(string email = "user@example.com", long tgId = TelegramId) => new(
-        Uuid: "uuid-1234",
-        Email: email,
-        Enable: false,
-        ExpiryTime: 1,
-        TgId: tgId,
-        TotalGB: 100L * 1024 * 1024 * 1024,
-        Comment: "some comment",
-        LimitIp: 2,
-        LimitHwid: 2,
-        TrafficReset: "monthly",
-        TrafficResetDay: 1,
-        Reset: 0,
-        Security: "auto",
-        SubId: "sub123",
-        Flow: "xtls-rprx-vision",
-        Id: 42,
-        InboundIds: null
-    );
+    private static PanelClient SampleClient(string email = "user@example.com", long tgId = TelegramId)
+    {
+        return new PanelClient(
+            "uuid-1234",
+            email,
+            false,
+            1,
+            tgId,
+            100L * 1024 * 1024 * 1024,
+            "some comment",
+            2,
+            2,
+            "monthly",
+            1,
+            0,
+            "auto",
+            "sub123",
+            "xtls-rprx-vision",
+            42,
+            null
+        );
+    }
 
     private static string ClientListJson(params PanelClient[] clients)
     {
@@ -88,33 +97,53 @@ public class TributeEventsHandlerTests
         return JsonSerializer.Serialize(apiResponse);
     }
 
-    private static string SuccessJson() => JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
-
-    private static string FailureJson(string message) =>
-        JsonSerializer.Serialize(new PanelApiResponse<object>(false, message, null));
-
-    private static TributeEventsHandler CreateHandler(Func<HttpRequestMessage, HttpResponseMessage> responder,
-        List<HttpRequestMessage>? requests = null, int[]? inboundIds = null)
+    private static string ClientByEmailJson(PanelClient client)
     {
+        return JsonSerializer.Serialize(new PanelApiResponse<PanelClientResponse>(true, "ok",
+            new PanelClientResponse(client, null, new List<int> { 1 }, 0)));
+    }
+
+    private static string SuccessJson()
+    {
+        return JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
+    }
+
+    private static string FailureJson(string message)
+    {
+        return JsonSerializer.Serialize(new PanelApiResponse<object>(false, message, null));
+    }
+
+    private static (TributeEventsHandler Handler, FakeTelegramBotClient Bot) CreateHandler(
+        Func<HttpRequestMessage, HttpResponseMessage> responder,
+        List<HttpRequestMessage>? requests = null, int[]? inboundIds = null, int referralBonusDays = 30)
+    {
+        var bot = new FakeTelegramBotClient();
+
         var options = Options.Create(new TelegramOptions
         {
             BotToken = "token",
             SupportUrl = "https://t.me/support",
+            TributeSubscriptionUrl = "https://tribute.test/sub",
+            BotUsername = "TestBot",
+            ReferralBonusDays = referralBonusDays,
             DefaultInboundIds = inboundIds ?? new[] { 1, 2 },
             WebhookPath = "/webhooks/telegram"
         });
 
-        return new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance,
-            new SubscriptionProvisioner(NullLogger<SubscriptionProvisioner>.Instance,
-                new PanelApiClient(new HttpClient(new StubHttpMessageHandler(request =>
-                {
-                    requests?.Add(request);
-                    return responder(request);
-                }))
-                {
-                    BaseAddress = new Uri(BaseUri)
-                }, NullLogger<PanelApiClient>.Instance),
-                options));
+        var panelClient = new PanelApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            requests?.Add(request);
+            return responder(request);
+        }))
+        {
+            BaseAddress = new Uri(BaseUri)
+        }, NullLogger<PanelApiClient>.Instance);
+
+        var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient);
+
+        return (new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance,
+            new SubscriptionProvisioner(NullLogger<SubscriptionProvisioner>.Instance, panelClient, options),
+            panelClient, adminPanelService, bot, options), bot);
     }
 
     private static async Task<JsonElement> ReadBodyJson(HttpRequestMessage request)
@@ -137,17 +166,13 @@ public class TributeEventsHandlerTests
         var requests = new List<HttpRequestMessage>();
         var client = SampleClient();
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
                 return StubHttpMessageHandler.Json(ClientListJson(client));
-            }
 
             if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/update/{client.Email}")
-            {
                 return StubHttpMessageHandler.Json(SuccessJson());
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         }, requests);
@@ -175,17 +200,13 @@ public class TributeEventsHandlerTests
         var requests = new List<HttpRequestMessage>();
         var client = SampleClient();
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
                 return StubHttpMessageHandler.Json(ClientListJson(client));
-            }
 
             if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/update/{client.Email}")
-            {
                 return StubHttpMessageHandler.Json(SuccessJson());
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         }, requests);
@@ -201,19 +222,14 @@ public class TributeEventsHandlerTests
     {
         var requests = new List<HttpRequestMessage>();
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             var path = request.RequestUri!.AbsolutePath;
 
             if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
                 return StubHttpMessageHandler.Json(ClientListJson());
-            }
 
-            if (path == "/admin/panel/api/clients/add")
-            {
-                return StubHttpMessageHandler.Json(SuccessJson());
-            }
+            if (path == "/admin/panel/api/clients/add") return StubHttpMessageHandler.Json(SuccessJson());
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         }, requests);
@@ -249,22 +265,17 @@ public class TributeEventsHandlerTests
     {
         var requests = new List<HttpRequestMessage>();
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             var path = request.RequestUri!.AbsolutePath;
 
             if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
                 return StubHttpMessageHandler.Json(ClientListJson());
-            }
 
-            if (path == "/admin/panel/api/clients/add")
-            {
-                return StubHttpMessageHandler.Json(SuccessJson());
-            }
+            if (path == "/admin/panel/api/clients/add") return StubHttpMessageHandler.Json(SuccessJson());
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, requests, inboundIds: new[] { 5 });
+        }, requests, new[] { 5 });
 
         await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
 
@@ -286,7 +297,7 @@ public class TributeEventsHandlerTests
         var requests = new List<HttpRequestMessage>();
         var getRequests = 0;
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             var path = request.RequestUri!.AbsolutePath;
 
@@ -294,40 +305,32 @@ public class TributeEventsHandlerTests
             {
                 getRequests++;
 
-                if (getRequests == 1)
-                {
-                    return StubHttpMessageHandler.Json(ClientListJson());
-                }
+                if (getRequests == 1) return StubHttpMessageHandler.Json(ClientListJson());
 
                 return StubHttpMessageHandler.Json(ClientListJson(new PanelClient(
-                    Uuid: "uuid-5678",
-                    Email: $"tg{TelegramId}",
-                    Enable: true,
-                    ExpiryTime: ExpectedExpiryMs,
-                    TgId: TelegramId,
-                    TotalGB: 0,
-                    Comment: "Created from subscription: Standard",
-                    LimitIp: 0,
-                    LimitHwid: 2,
-                    TrafficReset: "monthly",
-                    TrafficResetDay: 1,
-                    Reset: 0,
-                    Security: null,
-                    SubId: "sub456",
-                    Flow: null,
-                    Id: 99,
-                    InboundIds: null)));
+                    "uuid-5678",
+                    $"tg{TelegramId}",
+                    true,
+                    ExpectedExpiryMs,
+                    TelegramId,
+                    0,
+                    "Created from subscription: Standard",
+                    0,
+                    2,
+                    "monthly",
+                    1,
+                    0,
+                    null,
+                    "sub456",
+                    null,
+                    99,
+                    null)));
             }
 
             if (path == "/admin/panel/api/clients/add")
-            {
                 return StubHttpMessageHandler.Json(FailureJson("Duplicate email"));
-            }
 
-            if (path == "/admin/panel/api/clients/update/tg12345")
-            {
-                return StubHttpMessageHandler.Json(SuccessJson());
-            }
+            if (path == "/admin/panel/api/clients/update/tg12345") return StubHttpMessageHandler.Json(SuccessJson());
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         }, requests);
@@ -344,7 +347,7 @@ public class TributeEventsHandlerTests
     {
         var getRequests = 0;
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             var path = request.RequestUri!.AbsolutePath;
 
@@ -355,9 +358,7 @@ public class TributeEventsHandlerTests
             }
 
             if (path == "/admin/panel/api/clients/add")
-            {
                 return StubHttpMessageHandler.Json(FailureJson("something broke"));
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         });
@@ -375,19 +376,15 @@ public class TributeEventsHandlerTests
         var first = SampleClient("first@example.com");
         var second = SampleClient("second@example.com");
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             var path = request.RequestUri!.AbsolutePath;
 
             if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
                 return StubHttpMessageHandler.Json(ClientListJson(first, second));
-            }
 
             if (path == $"/admin/panel/api/clients/update/{first.Email}")
-            {
                 return StubHttpMessageHandler.Json(SuccessJson());
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         }, requests);
@@ -401,7 +398,7 @@ public class TributeEventsHandlerTests
     [Fact]
     public async Task HandleRenewedSubscription_PanelFetchReturnsSuccessFalse_ThrowsPanelApiException()
     {
-        var handler = CreateHandler(_ => StubHttpMessageHandler.Json(FailureJson("boom")));
+        var (handler, _) = CreateHandler(_ => StubHttpMessageHandler.Json(FailureJson("boom")));
 
         await Assert.ThrowsAsync<PanelApiException>(() =>
             handler.HandleRenewedSubscription(RenewedSubscriptionEvent(), CancellationToken.None));
@@ -410,7 +407,7 @@ public class TributeEventsHandlerTests
     [Fact]
     public async Task HandleRenewedSubscription_PanelFetchReturnsNullBody_ThrowsPanelApiException()
     {
-        var handler = CreateHandler(_ => StubHttpMessageHandler.Json("null"));
+        var (handler, _) = CreateHandler(_ => StubHttpMessageHandler.Json("null"));
 
         await Assert.ThrowsAsync<PanelApiException>(() =>
             handler.HandleRenewedSubscription(RenewedSubscriptionEvent(), CancellationToken.None));
@@ -421,19 +418,15 @@ public class TributeEventsHandlerTests
     {
         var client = SampleClient();
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             var path = request.RequestUri!.AbsolutePath;
 
             if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
                 return StubHttpMessageHandler.Json(ClientListJson(client));
-            }
 
             if (path == $"/admin/panel/api/clients/update/{client.Email}")
-            {
                 return StubHttpMessageHandler.Json(FailureJson("update rejected"));
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         });
@@ -447,22 +440,18 @@ public class TributeEventsHandlerTests
     {
         var client = SampleClient();
 
-        var handler = CreateHandler(request =>
+        var (handler, _) = CreateHandler(request =>
         {
             var path = request.RequestUri!.AbsolutePath;
 
             if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
                 return StubHttpMessageHandler.Json(ClientListJson(client));
-            }
 
             if (path == $"/admin/panel/api/clients/update/{client.Email}")
-            {
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError)
                 {
                     Content = new StringContent("internal server error")
                 };
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         });
@@ -475,10 +464,10 @@ public class TributeEventsHandlerTests
     public async Task HandleNewSubscription_TelegramUserIdZero_ThrowsInvalidPayloadException()
     {
         var requests = new List<HttpRequestMessage>();
-        var handler = CreateHandler(_ => throw new InvalidOperationException("No HTTP calls expected"), requests);
+        var (handler, _) = CreateHandler(_ => throw new InvalidOperationException("No HTTP calls expected"), requests);
 
         await Assert.ThrowsAsync<InvalidPayloadException>(() =>
-            handler.HandleNewSubscription(NewSubscriptionEvent(telegramUserId: 0), CancellationToken.None));
+            handler.HandleNewSubscription(NewSubscriptionEvent(0), CancellationToken.None));
 
         Assert.Empty(requests);
     }
@@ -487,10 +476,386 @@ public class TributeEventsHandlerTests
     public async Task HandleRenewedSubscription_NegativeTelegramUserId_ThrowsInvalidPayloadException()
     {
         var requests = new List<HttpRequestMessage>();
-        var handler = CreateHandler(_ => throw new InvalidOperationException("No HTTP calls expected"), requests);
+        var (handler, _) = CreateHandler(_ => throw new InvalidOperationException("No HTTP calls expected"), requests);
 
         await Assert.ThrowsAsync<InvalidPayloadException>(() =>
-            handler.HandleRenewedSubscription(RenewedSubscriptionEvent(telegramUserId: -5), CancellationToken.None));
+            handler.HandleRenewedSubscription(RenewedSubscriptionEvent(-5), CancellationToken.None));
+
+        Assert.Empty(requests);
+    }
+
+    private static PanelClient TaggedRefereeClient()
+    {
+        return SampleClient("newbie@example.com") with
+        {
+            Enable = false,
+            ExpiryTime = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds(),
+            Comment = "Telegram ID: 12345 · Referrer tgId: 777 · Referred by: friend@example.com"
+        };
+    }
+
+    private static PanelClient ReferrerClient()
+    {
+        return SampleClient("friend@example.com", 777) with
+        {
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds(),
+            Comment = "referrer comment"
+        };
+    }
+
+    [Fact]
+    public async Task HandleNewSubscription_WithReferrerTag_GrantsBonusAndMarksPaid()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referee = TaggedRefereeClient();
+        var referrer = ReferrerClient();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/tgId/777")
+                return StubHttpMessageHandler.Json(ClientListJson(referrer));
+
+            if (path == "/admin/panel/api/clients/get/friend@example.com")
+                return StubHttpMessageHandler.Json(ClientByEmailJson(referrer));
+
+            if (path == $"/admin/panel/api/clients/update/{referee.Email}" ||
+                path == $"/admin/panel/api/clients/update/{referrer.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
+
+        var bodies = new List<JsonElement>();
+        foreach (var r in requests.Where(r => r.Method == HttpMethod.Post)) bodies.Add(await ReadBodyJson(r));
+
+        var grantBody = bodies.First(b =>
+            b.GetProperty("email").GetString() == referrer.Email &&
+            !b.GetProperty("comment").GetString()!.Contains("Referral credit:"));
+        Assert.True(grantBody.GetProperty("enable").GetBoolean());
+        Assert.InRange(grantBody.GetProperty("expiryTime").GetInt64(),
+            DateTimeOffset.UtcNow.AddDays(40).AddMinutes(-2).ToUnixTimeMilliseconds(),
+            DateTimeOffset.UtcNow.AddDays(40).AddMinutes(2).ToUnixTimeMilliseconds());
+
+        var creditBody = bodies.First(b =>
+            b.GetProperty("comment").GetString()!.Contains("Referral credit: 30d"));
+        Assert.Equal(referrer.Email, creditBody.GetProperty("email").GetString());
+
+        var paidBody = bodies.First(b =>
+            b.GetProperty("comment").GetString()!.Contains("Referral bonus paid"));
+        Assert.Equal(referee.Email, paidBody.GetProperty("email").GetString());
+
+        var dm = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("777", dm.Body);
+        Assert.Contains("30 days", dm.Body);
+    }
+
+    [Fact]
+    public async Task HandleNewSubscription_PendingUnknownReferrer_NoGrant()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referee = TaggedRefereeClient() with
+        {
+            Comment = "Telegram ID: 12345 · Referred by (pending): ghost@example.com"
+        };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/ghost@example.com")
+                return StubHttpMessageHandler.Json(FailureJson("not found"));
+
+            if (path == $"/admin/panel/api/clients/update/{referee.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
+
+        Assert.DoesNotContain(requests,
+            r => r.RequestUri!.AbsolutePath.Contains("/clients/update/ghost"));
+        Assert.Empty(bot.Requests);
+
+        foreach (var r in requests.Where(r => r.Method == HttpMethod.Post))
+        {
+            var body = await ReadBodyJson(r);
+            Assert.DoesNotContain("Referral bonus paid", body.GetProperty("comment").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task HandleNewSubscription_ProvisionedRefereeWithTag_NoGrant()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referee = TaggedRefereeClient() with
+        {
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds()
+        };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(referee));
+
+            if (path == $"/admin/panel/api/clients/update/{referee.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
+
+        Assert.DoesNotContain(requests,
+            r => r.RequestUri!.AbsolutePath.Contains("friend@example.com"));
+        Assert.Empty(bot.Requests);
+    }
+
+    [Fact]
+    public async Task HandleNewSubscription_AlreadyPaidMarker_NoGrant()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referee = TaggedRefereeClient() with
+        {
+            Comment = TaggedRefereeClient().Comment + " · Referral bonus paid"
+        };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(referee));
+
+            if (path == $"/admin/panel/api/clients/update/{referee.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
+
+        Assert.DoesNotContain(requests,
+            r => r.RequestUri!.AbsolutePath.Contains("friend@example.com"));
+        Assert.Empty(bot.Requests);
+    }
+
+    [Fact]
+    public async Task HandleRenewedSubscription_WithReferrerTag_NoGrant()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referee = TaggedRefereeClient();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(referee));
+
+            if (path == $"/admin/panel/api/clients/update/{referee.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleRenewedSubscription(RenewedSubscriptionEvent(), CancellationToken.None);
+
+        Assert.DoesNotContain(requests,
+            r => r.RequestUri!.AbsolutePath.Contains("friend@example.com"));
+        Assert.Empty(bot.Requests);
+    }
+
+    [Fact]
+    public async Task HandleNewSubscription_BonusDisabled_NoGrant()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referee = TaggedRefereeClient();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(referee));
+
+            if (path == $"/admin/panel/api/clients/update/{referee.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests, referralBonusDays: 0);
+
+        await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
+
+        Assert.DoesNotContain(requests,
+            r => r.RequestUri!.AbsolutePath.Contains("friend@example.com"));
+        Assert.Empty(bot.Requests);
+    }
+
+    private static CancelledSubscription CancelledSubscriptionEvent(long telegramUserId = TelegramId)
+    {
+        return new CancelledSubscription(
+            "Standard",
+            1,
+            2,
+            "monthly",
+            "regular",
+            9.99m,
+            9.99m,
+            "USD",
+            "T-31326",
+            telegramUserId,
+            "durov",
+            3,
+            "channel",
+            "",
+            ExpiresAt
+        );
+    }
+
+    [Fact]
+    public void CancelledSubscription_DocumentedShape_Deserializes()
+    {
+        const string json = """
+                            {
+                              "name": "cancelled_subscription",
+                              "created_at": "2025-03-21T11:20:44.013969Z",
+                              "sent_at": "2025-03-21T11:20:44.527657077Z",
+                              "payload": {
+                                "subscription_name": "Join the private club 🎉",
+                                "subscription_id": 1646,
+                                "period_id": 1549,
+                                "period": "monthly",
+                                "type": "regular",
+                                "price": 1000,
+                                "amount": 1000,
+                                "currency": "eur",
+                                "trb_user_id": "T-31326",
+                                "telegram_user_id": 12321321,
+                                "telegram_username": "durov",
+                                "channel_id": 614,
+                                "channel_name": "lbs",
+                                "cancel_reason": "",
+                                "expires_at": "2025-03-20T11:13:44.737Z"
+                              }
+                            }
+                            """;
+
+        var webhookEvent = JsonSerializer.Deserialize<WebhookEvent>(json,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Assert.NotNull(webhookEvent);
+        Assert.Equal("cancelled_subscription", webhookEvent.Name);
+
+        var payload = webhookEvent.Payload.Deserialize<CancelledSubscription>();
+        Assert.NotNull(payload);
+        Assert.Equal(1646, payload.SubscriptionId);
+        Assert.Equal(12321321, payload.TelegramUserId);
+        Assert.Equal("durov", payload.TelegramUsername);
+        Assert.Equal("T-31326", payload.TrbUserId);
+        Assert.Equal(1000, payload.Price);
+    }
+
+    [Fact]
+    public void CancelledSubscription_MissingOptionalFields_DeserializesToNull()
+    {
+        const string json = """
+                            {
+                              "payload": {
+                                "subscription_name": "Club",
+                                "subscription_id": 1,
+                                "period_id": 2,
+                                "period": "monthly",
+                                "type": "regular",
+                                "price": 1000,
+                                "amount": 1000,
+                                "currency": "eur",
+                                "telegram_user_id": 42,
+                                "channel_id": 7,
+                                "channel_name": "lbs",
+                                "expires_at": "2025-03-20T11:13:44.737Z"
+                              }
+                            }
+                            """;
+
+        var payload = JsonDocument.Parse(json).RootElement
+            .GetProperty("payload")
+            .Deserialize<CancelledSubscription>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        Assert.NotNull(payload);
+        Assert.Equal(42, payload.TelegramUserId);
+        Assert.Null(payload.TelegramUsername);
+        Assert.Null(payload.CancelReason);
+        Assert.Null(payload.TrbUserId);
+    }
+
+    [Fact]
+    public async Task HandleCancelledSubscription_TagsClient()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var client = SampleClient();
+
+        var (handler, _) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(client));
+
+            if (path == $"/admin/panel/api/clients/update/{client.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleCancelledSubscription(CancelledSubscriptionEvent(), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests, r => r.Method == HttpMethod.Post);
+        var body = await ReadBodyJson(updateRequest);
+        Assert.Contains("Cancelled ", body.GetProperty("comment").GetString());
+        Assert.Contains("some comment", body.GetProperty("comment").GetString());
+    }
+
+    [Fact]
+    public async Task HandleCancelledSubscription_AlreadyTagged_NoUpdate()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var client = SampleClient() with { Comment = "some comment · Cancelled 2026-09-01" };
+
+        var (handler, _) = CreateHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(client));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleCancelledSubscription(CancelledSubscriptionEvent(), CancellationToken.None);
+
+        Assert.DoesNotContain(requests, r => r.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public async Task HandleCancelledSubscription_InvalidId_AcksWithoutCalls()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var (handler, _) = CreateHandler(_ => throw new InvalidOperationException("No HTTP calls expected"), requests);
+
+        await handler.HandleCancelledSubscription(CancelledSubscriptionEvent(0),
+            CancellationToken.None);
 
         Assert.Empty(requests);
     }

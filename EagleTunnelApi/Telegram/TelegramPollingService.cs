@@ -3,7 +3,9 @@ using Telegram.Bot.Polling;
 
 namespace EagleTunnelApi.Telegram;
 
-public sealed class TelegramPollingService(ITelegramBotClient botClient, IUpdateHandler updateHandler,
+public sealed class TelegramPollingService(
+    ITelegramBotClient botClient,
+    IUpdateHandler updateHandler,
     ILogger<TelegramPollingService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

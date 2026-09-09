@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!-- Surface code-style analyzer warnings (e.g. unused code per .editorconfig) at build time. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Required for IDE0005 (remove unnecessary usings) to run during build. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- This repo does not use XML doc comments. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+</Project>

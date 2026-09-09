@@ -23,47 +23,69 @@ public class TelegramHandlersTests
     private const string PanelBaseUri = "https://panel.test";
     private const long TelegramId = 12345;
 
-    private static PanelClient ActiveClient() => new(
-        Uuid: "uuid-1",
-        Email: "user@example.com",
-        Enable: true,
-        ExpiryTime: DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds(),
-        TgId: TelegramId,
-        TotalGB: 100L * 1024 * 1024 * 1024,
-        Comment: "comment",
-        LimitIp: 2,
-        LimitHwid: 2,
-        TrafficReset: "monthly",
-        TrafficResetDay: 1,
-        Reset: 0,
-        Security: "auto",
-        SubId: "sub123",
-        Flow: "xtls-rprx-vision",
-        Id: 1,
-        InboundIds: null
-    );
-
-    private static PanelClient TestClient(bool enable) => ActiveClient() with { Enable = enable };
-
-    private static string ClientListJson(PanelClient client) =>
-        JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
-            new List<PanelClientResponse> { new(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024) }));
-
-    private static string ClientByEmailJson(PanelClient client) =>
-        JsonSerializer.Serialize(new PanelApiResponse<PanelClientResponse>(true, "ok",
-            new PanelClientResponse(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024)));
-
-    private static string EmptyListJson() =>
-        JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
-            new List<PanelClientResponse>()));
-
-    private static string SuccessJson() =>
-        JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
-
-    private static HttpResponseMessage Json(string rawJson) => new(HttpStatusCode.OK)
+    private static PanelClient ActiveClient()
     {
-        Content = new StringContent(rawJson, Encoding.UTF8, "application/json")
-    };
+        return new PanelClient(
+            "uuid-1",
+            "user@example.com",
+            true,
+            DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds(),
+            TelegramId,
+            100L * 1024 * 1024 * 1024,
+            "comment",
+            2,
+            2,
+            "monthly",
+            1,
+            0,
+            "auto",
+            "sub123",
+            "xtls-rprx-vision",
+            1,
+            null
+        );
+    }
+
+    private static PanelClient TestClient(bool enable)
+    {
+        return ActiveClient() with { Enable = enable };
+    }
+
+    private static string ClientListJson(PanelClient client)
+    {
+        return JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
+            new List<PanelClientResponse> { new(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024) }));
+    }
+
+    private static string ClientByEmailJson(PanelClient client)
+    {
+        return JsonSerializer.Serialize(new PanelApiResponse<PanelClientResponse>(true, "ok",
+            new PanelClientResponse(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024)));
+    }
+
+    private static string EmptyListJson()
+    {
+        return JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
+            new List<PanelClientResponse>()));
+    }
+
+    private static string FailureJson(string message)
+    {
+        return JsonSerializer.Serialize(new PanelApiResponse<object>(false, message, null));
+    }
+
+    private static string SuccessJson()
+    {
+        return JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
+    }
+
+    private static HttpResponseMessage Json(string rawJson)
+    {
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(rawJson, Encoding.UTF8, "application/json")
+        };
+    }
 
     private static (TelegramHandlers Handler, FakeTelegramBotClient Bot) CreateHandler(
         Func<HttpRequestMessage, HttpResponseMessage> panelResponder,
@@ -76,6 +98,7 @@ public class TelegramHandlersTests
             BotToken = "token",
             SupportUrl = "https://t.me/support",
             TributeSubscriptionUrl = "https://tribute.test",
+            BotUsername = "TestBot",
             DefaultInboundIds = new[] { 1, 2 },
             WebhookPath = "/webhooks/telegram",
             AdminIds = adminIds ?? Array.Empty<long>()
@@ -94,59 +117,50 @@ public class TelegramHandlersTests
         return (handler, bot);
     }
 
-    private static BotUpdate TextUpdate(string text, BotUser? from = null) => new()
+    private static BotUpdate TextUpdate(string text, BotUser? from = null)
     {
-        Message = new BotMessage
+        return new BotUpdate
         {
-            Id = 1,
-            Text = text,
-            Chat = new BotChat { Id = TelegramId, Type = ChatType.Private },
-            From = from ?? new BotUser { Id = TelegramId }
-        }
-    };
-
-    private static BotUpdate CallbackUpdate(string data) => new()
-    {
-        CallbackQuery = new BotCallbackQuery
-        {
-            Id = "cb-1",
-            Data = data,
-            From = new BotUser { Id = TelegramId },
             Message = new BotMessage
             {
-                Id = 10,
-                Text = "menu",
-                Chat = new BotChat { Id = TelegramId, Type = ChatType.Private }
+                Id = 1,
+                Text = text,
+                Chat = new BotChat { Id = TelegramId, Type = ChatType.Private },
+                From = from ?? new BotUser { Id = TelegramId }
             }
-        }
-    };
+        };
+    }
+
+    private static BotUpdate CallbackUpdate(string data)
+    {
+        return new BotUpdate
+        {
+            CallbackQuery = new BotCallbackQuery
+            {
+                Id = "cb-1",
+                Data = data,
+                From = new BotUser { Id = TelegramId },
+                Message = new BotMessage
+                {
+                    Id = 10,
+                    Text = "menu",
+                    Chat = new BotChat { Id = TelegramId, Type = ChatType.Private }
+                }
+            }
+        };
+    }
 
     [Fact]
-    public async Task Start_NewUser_AutoRegisters_WithSanitizedUsernameAndComment()
+    public async Task Start_NewUser_PromptsForEmail_WithoutCreating()
     {
         var requests = new List<HttpRequestMessage>();
-        var getCount = 0;
 
         var (handler, bot) = CreateHandler(request =>
         {
             requests.Add(request);
-            var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                getCount++;
-                return getCount == 1 ? Json(EmptyListJson()) : Json(ClientListJson(TestClient(enable: false)));
-            }
-
-            if (path == "/admin/panel/api/clients/add")
-            {
-                return Json(SuccessJson());
-            }
-
-            if (path == "/admin/panel/api/clients/bulkDisable")
-            {
-                return Json(SuccessJson());
-            }
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return Json(EmptyListJson());
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         });
@@ -160,39 +174,511 @@ public class TelegramHandlersTests
         };
         await handler.HandleUpdateAsync(bot, TextUpdate("/start", from), CancellationToken.None);
 
-        Assert.Contains(requests,
+        Assert.DoesNotContain(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+
+        var prompt = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("email address", prompt.Body);
+    }
+
+    private static PanelClient ReferrerAccount(long tgId = 777, string email = "friend@example.com")
+    {
+        return ActiveClient() with
+        {
+            Email = email,
+            TgId = tgId,
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds()
+        };
+    }
+
+    private static (TelegramHandlers Handler, FakeTelegramBotClient Bot) CreateWizardHandler(
+        List<HttpRequestMessage> requests, PanelClient referrer, string newEmail = "newbie@example.com")
+    {
+        var getCount = 0;
+
+        return CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+            {
+                getCount++;
+                if (getCount <= 2) return Json(EmptyListJson());
+
+                var created = ActiveClient() with
+                {
+                    Email = newEmail,
+                    Enable = false,
+                    ExpiryTime = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds(),
+                    Comment = "Telegram ID: 12345"
+                };
+                return Json(ClientListJson(created));
+            }
+
+            if (path == "/admin/panel/api/clients/get/tgId/777") return Json(ClientListJson(referrer));
+
+            if (path == $"/admin/panel/api/clients/get/{newEmail}") return Json(FailureJson("not found"));
+
+            if (path == $"/admin/panel/api/clients/get/{referrer.Email}") return Json(ClientByEmailJson(referrer));
+
+            if (path == "/admin/panel/api/clients/add" ||
+                path == "/admin/panel/api/clients/bulkDisable")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+    }
+
+    [Fact]
+    public async Task Wizard_WithDeepLink_Confirm_CreatesWithReferralTags()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referrer = ReferrerAccount();
+        var (handler, bot) = CreateWizardHandler(requests, referrer);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start ref_777"), CancellationToken.None);
+
+        var emailPrompt = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("email address", emailPrompt.Body);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var confirm = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("friend@example.com", confirm.Body);
+        Assert.Contains("\"ref:confirm\"", confirm.Body);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.RefConfirm), CancellationToken.None);
+
+        var addRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        var payload = await ReadJson(addRequest);
+        var client = payload.GetProperty("client");
+
+        Assert.Equal("newbie@example.com", client.GetProperty("email").GetString());
+        Assert.False(client.GetProperty("enable").GetBoolean());
+        Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
+
+        var comment = client.GetProperty("comment").GetString()!;
+        Assert.Contains("Referred by: friend@example.com", comment);
+        Assert.Contains("Referrer tgId: 777", comment);
+        Assert.Contains($"Telegram ID: {TelegramId}", comment);
+
         Assert.Contains(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/bulkDisable");
 
-        var addRequest = requests.Single(r => r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
-        var payload = await ReadJson(addRequest);
-
-        var client = payload.GetProperty("client");
-        Assert.Equal($"tg{TelegramId}", client.GetProperty("email").GetString());
-        Assert.False(client.GetProperty("enable").GetBoolean());
-        Assert.Equal(300L * 1024 * 1024 * 1024, client.GetProperty("totalGB").GetInt64());
-        Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
-        Assert.Equal(2, client.GetProperty("limitHwid").GetInt32());
-        Assert.Equal("monthly", client.GetProperty("trafficReset").GetString());
-        Assert.Equal(1, client.GetProperty("trafficResetDay").GetInt32());
-        Assert.Equal("xtls-rprx-vision", client.GetProperty("flow").GetString());
-        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("password").GetString()!);
-        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("subId").GetString()!);
-        Assert.Matches("^[a-z0-9]{16}$", client.GetProperty("auth").GetString()!);
-
-        var comment = client.GetProperty("comment").GetString()!;
-        Assert.Contains("John 😀 Doe Smith", comment);
-        Assert.Contains("@john_smith", comment);
-        Assert.Contains($"Telegram ID: {TelegramId}", comment);
-
-        Assert.Equal(new[] { 1, 2 }, payload.GetProperty("inboundIds").EnumerateArray()
-            .Select(e => e.GetInt32()).ToArray());
-
-        var menu = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        var menu = bot.Requests.Last(r => r.MethodName == "sendMessage");
         Assert.Contains("Welcome to Eagle Tunnel Network", menu.Body);
-        Assert.Contains("Support", menu.Body);
-        Assert.DoesNotContain("start_registration", menu.Body);
+    }
+
+    [Fact]
+    public async Task Wizard_Skip_CreatesWithoutReferralTags()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var (handler, bot) = CreateWizardHandler(requests, ReferrerAccount());
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var referrerPrompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("\"ref:skip\"", referrerPrompt.Body);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+
+        var addRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        var client = (await ReadJson(addRequest)).GetProperty("client");
+
+        Assert.Equal("newbie@example.com", client.GetProperty("email").GetString());
+        Assert.DoesNotContain("Referred by", client.GetProperty("comment").GetString());
+    }
+
+    [Fact]
+    public async Task Wizard_ManualReferrer_UnknownEmail_SavesPending()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var getCount = 0;
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+            {
+                getCount++;
+                return getCount <= 2 ? Json(EmptyListJson()) : Json(ClientListJson(TestClient(false)));
+            }
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com" ||
+                path == "/admin/panel/api/clients/get/ghost@example.com")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/add" ||
+                path == "/admin/panel/api/clients/bulkDisable")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("ghost@example.com"), CancellationToken.None);
+
+        var addRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        var comment = (await ReadJson(addRequest)).GetProperty("client").GetProperty("comment").GetString()!;
+
+        Assert.Contains("Referred by (pending): ghost@example.com", comment);
+    }
+
+    [Fact]
+    public async Task Wizard_SelfEmail_AsReferrer_Rejected()
+    {
+        var requests = new List<HttpRequestMessage>();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(EmptyListJson());
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com") return Json(FailureJson("not found"));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var rejection = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("yourself", rejection.Body);
+        Assert.DoesNotContain(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+    }
+
+    [Fact]
+    public async Task Wizard_SelfLink_Ignored_FallsBackToManual()
+    {
+        var requests = new List<HttpRequestMessage>();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(EmptyListJson());
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com") return Json(FailureJson("not found"));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate($"/start ref_{TelegramId}"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var referrerPrompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.DoesNotContain("ref:confirm", referrerPrompt.Body);
+        Assert.Contains("\"ref:skip\"", referrerPrompt.Body);
+    }
+
+    [Fact]
+    public async Task Wizard_InvalidAndTakenEmail_Reprompt()
+    {
+        var taken = ActiveClient() with { Email = "taken@example.com", TgId = 999 };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(EmptyListJson());
+
+            if (path == "/admin/panel/api/clients/get/taken@example.com") return Json(ClientByEmailJson(taken));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("not-an-email"), CancellationToken.None);
+
+        var invalid = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("valid email", invalid.Body);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("taken@example.com"), CancellationToken.None);
+
+        var takenMsg = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("already registered", takenMsg.Body);
+    }
+
+    [Fact]
+    public async Task Wizard_LegacyProvisioned_MigratesEmailOnly()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var getCount = 0;
+        var legacy = ActiveClient() with
+        {
+            Email = $"tg{TelegramId}",
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds()
+        };
+        var migrated = legacy with { Email = "newbie@example.com" };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+            {
+                getCount++;
+                return Json(ClientListJson(getCount <= 2 ? legacy : migrated));
+            }
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com") return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/update/tg12345") return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+
+        var prompt = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("email address", prompt.Body);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.StartsWith(
+                "/admin/panel/api/clients/update/", StringComparison.Ordinal));
+        var body = await ReadJson(updateRequest);
+
+        Assert.Equal("newbie@example.com", body.GetProperty("email").GetString());
+        Assert.DoesNotContain("Referred by", body.GetProperty("comment").GetString());
+        Assert.DoesNotContain(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+    }
+
+    [Fact]
+    public async Task Wizard_LegacyUnprovisioned_GetsReferrerStep()
+    {
+        var legacy = ActiveClient() with
+        {
+            Email = $"tg{TelegramId}",
+            Enable = false,
+            ExpiryTime = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds()
+        };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(legacy));
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com") return Json(FailureJson("not found"));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var referrerPrompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("\"ref:skip\"", referrerPrompt.Body);
+    }
+
+    [Fact]
+    public async Task ReferrerCommand_RefusedWhenProvisioned()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/referrer"), CancellationToken.None);
+
+        var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("new subscribers", send.Body);
+    }
+
+    [Fact]
+    public async Task ReferrerCommand_UpdatesAttributionWhenUnprovisioned()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var account = ActiveClient() with
+        {
+            Enable = false,
+            ExpiryTime = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds(),
+            Comment = "comment"
+        };
+        var friend = ReferrerAccount();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(account));
+
+            if (path == $"/admin/panel/api/clients/get/{friend.Email}") return Json(ClientByEmailJson(friend));
+
+            if (path == $"/admin/panel/api/clients/update/{account.Email}") return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/referrer"), CancellationToken.None);
+
+        var prompt = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("referrer", prompt.Body);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("friend@example.com"), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.StartsWith(
+                "/admin/panel/api/clients/update/", StringComparison.Ordinal));
+        var comment = (await ReadJson(updateRequest)).GetProperty("comment").GetString()!;
+
+        Assert.Contains("Referred by: friend@example.com", comment);
+        Assert.Contains("Referrer tgId: 777", comment);
+    }
+
+    [Fact]
+    public async Task ReferralScreen_RendersInviteLink()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Referral), CancellationToken.None);
+
+        var edit = Assert.Single(bot.Requests, r => r.MethodName == "editMessageText");
+        Assert.Contains("Invite Friends", edit.Body);
+        Assert.Contains($"t.me/TestBot?start=ref_{TelegramId}", edit.Body);
+        Assert.Contains("Copy Invite Link", edit.Body);
+    }
+
+    [Fact]
+    public async Task MainMenu_ContainsInviteButton()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+
+        var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("\"referral\"", send.Body);
+        Assert.Contains("Invite Friends", send.Body);
+    }
+
+    [Fact]
+    public async Task AdminLookup_ShowsReferralCreditAndCancelState()
+    {
+        var tagged = ActiveClient() with
+        {
+            Comment = "John · Telegram ID: 12345 · Referrer tgId: 777 " +
+                      "· Referred by: friend@example.com · Referral credit: 30d " +
+                      "· Referral bonus paid · Cancelled 2026-09-01"
+        };
+
+        var (handler, bot) = CreateHandler(_ => Json(ClientByEmailJson(tagged)), adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminLookup), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("user@example.com"), CancellationToken.None);
+
+        var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("Referred by", send.Body);
+        Assert.Contains("friend@example.com", send.Body);
+        Assert.Contains("777", send.Body);
+        Assert.Contains("30d", send.Body);
+        Assert.Contains("bonus paid", send.Body);
+        Assert.Contains("Cancelled", send.Body);
+    }
+
+    [Fact]
+    public async Task AdminMenu_ContainsNudgeButton()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/admin"), CancellationToken.None);
+
+        var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("\"admin:nudge\"", send.Body);
+    }
+
+    [Fact]
+    public async Task AdminNudge_ConfirmsAndSendsReminderWithMarker()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var expiry = DateTimeOffset.UtcNow.AddDays(2);
+        var expiryDate = DateOnly.FromDateTime(expiry.UtcDateTime);
+        var client = ActiveClient() with
+        {
+            TgId = 99999,
+            ExpiryTime = expiry.ToUnixTimeMilliseconds(),
+            Comment = "some comment · Cancelled 2026-01-01"
+        };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/user@example.com")
+            {
+                return Json(ClientByEmailJson(client));
+            }
+
+            if (path == "/admin/panel/api/clients/update/user@example.com")
+            {
+                return Json(SuccessJson());
+            }
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminNudge), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("user@example.com"), CancellationToken.None);
+
+        var confirm = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("admin:confirm:nudge:user@example.com", confirm.Body);
+
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminConfirmNudge}:user@example.com"), CancellationToken.None);
+
+        var dm = Assert.Single(bot.Requests,
+            r => r.MethodName == "sendMessage" && r.Body.Contains("99999"));
+        Assert.Contains("2 days", dm.Body);
+        Assert.Contains("https://tribute.test", dm.Body);
+
+        var updateRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.Contains("/clients/update/"));
+        Assert.Contains($"Reminder 2d sent for {expiryDate:yyyy-MM-dd}",
+            (await ReadJson(updateRequest)).GetProperty("comment").GetString());
+
+        var done = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Reminder sent", done.Body);
+    }
+
+    [Fact]
+    public async Task AdminNudge_WithoutTelegram_Refuses()
+    {
+        var client = ActiveClient() with { TgId = 0 };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/admin/panel/api/clients/get/user@example.com")
+            {
+                return Json(ClientByEmailJson(client));
+            }
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminNudge), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("user@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminConfirmNudge}:user@example.com"), CancellationToken.None);
+
+        var done = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("no Telegram", done.Body);
+        Assert.DoesNotContain(bot.Requests, r => r.MethodName == "sendMessage" && r.Body.Contains("2 days"));
     }
 
     [Fact]
@@ -211,7 +697,7 @@ public class TelegramHandlersTests
     [Fact]
     public async Task Start_ExistingDisabledUser_ShowsSupportWithoutConnect()
     {
-        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(TestClient(enable: false))));
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(TestClient(false))));
 
         await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
 
@@ -330,7 +816,7 @@ public class TelegramHandlersTests
     [Fact]
     public async Task AdminCommand_Admin_ShowsAdminMenu()
     {
-        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, TextUpdate("/admin"), CancellationToken.None);
 
@@ -343,7 +829,7 @@ public class TelegramHandlersTests
     [Fact]
     public async Task Start_AdminAccount_ShowsAdminButtonInMainMenu()
     {
-        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
 
@@ -367,7 +853,7 @@ public class TelegramHandlersTests
     [Fact]
     public async Task Start_AdminAccount_AdminButtonOpensAdminMenu()
     {
-        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Admin), CancellationToken.None);
@@ -380,7 +866,7 @@ public class TelegramHandlersTests
     [Fact]
     public async Task AdminLookup_WithId_ShowsClientCard()
     {
-        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminLookup), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate(TelegramId.ToString()), CancellationToken.None);
@@ -402,23 +888,16 @@ public class TelegramHandlersTests
             requests.Add(request);
             var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(ClientListJson(ActiveClient()));
-            }
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(ActiveClient()));
 
             if (path == $"/admin/panel/api/clients/get/{"user@example.com"}")
-            {
                 return Json(ClientByEmailJson(ActiveClient()));
-            }
 
             if (path.StartsWith("/admin/panel/api/clients/update/", StringComparison.Ordinal))
-            {
                 return Json(SuccessJson());
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, adminIds: [TelegramId]);
+        }, [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminGrant), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate(TelegramId.ToString()), CancellationToken.None);
@@ -450,15 +929,10 @@ public class TelegramHandlersTests
         {
             var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(ClientListJson(ActiveClient()));
-            }
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(ActiveClient()));
 
             if (path == $"/admin/panel/api/clients/get/{"user@example.com"}")
-            {
                 return Json(ClientByEmailJson(ActiveClient()));
-            }
 
             if (path == "/admin/panel/api/clients/bulkDisable")
             {
@@ -467,7 +941,7 @@ public class TelegramHandlersTests
             }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, adminIds: [TelegramId]);
+        }, [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminBan), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate(TelegramId.ToString()), CancellationToken.None);
@@ -489,15 +963,10 @@ public class TelegramHandlersTests
         {
             var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(ClientListJson(ActiveClient()));
-            }
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(ActiveClient()));
 
             if (path == $"/admin/panel/api/clients/get/{"user@example.com"}")
-            {
                 return Json(ClientByEmailJson(ActiveClient()));
-            }
 
             if (path == "/admin/panel/api/clients/bulkEnable")
             {
@@ -506,7 +975,7 @@ public class TelegramHandlersTests
             }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, adminIds: [TelegramId]);
+        }, [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminUnban), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate(TelegramId.ToString()), CancellationToken.None);
@@ -526,23 +995,16 @@ public class TelegramHandlersTests
         {
             var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(ClientListJson(ActiveClient()));
-            }
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(ActiveClient()));
 
             if (path == $"/admin/panel/api/clients/get/{"user@example.com"}")
-            {
                 return Json(ClientByEmailJson(ActiveClient()));
-            }
 
             if (path.StartsWith("/admin/panel/api/clients/update/", StringComparison.Ordinal))
-            {
                 return Json(SuccessJson());
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, adminIds: [TelegramId]);
+        }, [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminLimit), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate(TelegramId.ToString()), CancellationToken.None);
@@ -564,15 +1026,10 @@ public class TelegramHandlersTests
         {
             var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(ClientListJson(ActiveClient()));
-            }
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(ActiveClient()));
 
             if (path == $"/admin/panel/api/clients/get/{"user@example.com"}")
-            {
                 return Json(ClientByEmailJson(ActiveClient()));
-            }
 
             if (path == "/admin/panel/api/clients/resetTraffic/user@example.com")
             {
@@ -581,7 +1038,7 @@ public class TelegramHandlersTests
             }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, adminIds: [TelegramId]);
+        }, [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminReset), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate(TelegramId.ToString()), CancellationToken.None);
@@ -597,7 +1054,7 @@ public class TelegramHandlersTests
     [Fact]
     public async Task AdminLookup_ByEmail_ShowsClientCard()
     {
-        var (handler, bot) = CreateHandler(_ => Json(ClientByEmailJson(ActiveClient())), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(ClientByEmailJson(ActiveClient())), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminLookup), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate("user@example.com"), CancellationToken.None);
@@ -618,23 +1075,16 @@ public class TelegramHandlersTests
             requests.Add(request);
             var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(ClientListJson(ActiveClient()));
-            }
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(ActiveClient()));
 
             if (path == $"/admin/panel/api/clients/get/{"user@example.com"}")
-            {
                 return Json(ClientByEmailJson(ActiveClient()));
-            }
 
             if (path.StartsWith("/admin/panel/api/clients/update/", StringComparison.Ordinal))
-            {
                 return Json(SuccessJson());
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, adminIds: [TelegramId]);
+        }, [TelegramId]);
 
         const long newTelegramId = 99999;
 
@@ -667,23 +1117,16 @@ public class TelegramHandlersTests
             requests.Add(request);
             var path = request.RequestUri!.AbsolutePath;
 
-            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
-            {
-                return Json(ClientListJson(ActiveClient()));
-            }
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}") return Json(ClientListJson(ActiveClient()));
 
             if (path == $"/admin/panel/api/clients/get/{"user@example.com"}")
-            {
                 return Json(ClientByEmailJson(ActiveClient()));
-            }
 
             if (path.StartsWith("/admin/panel/api/clients/update/", StringComparison.Ordinal))
-            {
                 return Json(SuccessJson());
-            }
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
-        }, adminIds: [TelegramId]);
+        }, [TelegramId]);
 
         const long newTelegramId = 88888;
 
@@ -706,13 +1149,13 @@ public class TelegramHandlersTests
     {
         var summaries = Enumerable.Range(1, 25)
             .Select(i => new PanelClientSummary(
-                Id: i, Email: $"user{i:00}@example.com", SubId: $"sub{i:00}", Uuid: null, TotalGB: 100,
-                ExpiryTime: 0, Enable: i % 2 == 0, InboundIds: null, Traffic: null))
+                i, $"user{i:00}@example.com", $"sub{i:00}", null, 100,
+                0, i % 2 == 0, null, null))
             .ToList();
 
         var listJson = JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok", summaries));
 
-        var (handler, bot) = CreateHandler(_ => Json(listJson), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(listJson), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminList), CancellationToken.None);
 
@@ -730,13 +1173,13 @@ public class TelegramHandlersTests
     {
         var summaries = Enumerable.Range(1, 25)
             .Select(i => new PanelClientSummary(
-                Id: i, Email: $"user{i:00}@example.com", SubId: $"sub{i:00}", Uuid: null, TotalGB: 100,
-                ExpiryTime: 0, Enable: i % 2 == 0, InboundIds: null, Traffic: null))
+                i, $"user{i:00}@example.com", $"sub{i:00}", null, 100,
+                0, i % 2 == 0, null, null))
             .ToList();
 
         var listJson = JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok", summaries));
 
-        var (handler, bot) = CreateHandler(_ => Json(listJson), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(listJson), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminList), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, CallbackUpdate($"{MenuService.AdminListNext}:1"), CancellationToken.None);
@@ -752,7 +1195,7 @@ public class TelegramHandlersTests
     [Fact]
     public async Task AdminExit_ReturnsToMainMenu()
     {
-        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), adminIds: [TelegramId]);
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())), [TelegramId]);
 
         await handler.HandleUpdateAsync(bot, TextUpdate("/admin"), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminExit), CancellationToken.None);
