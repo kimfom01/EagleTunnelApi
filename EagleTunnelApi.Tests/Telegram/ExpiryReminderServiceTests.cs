@@ -136,7 +136,8 @@ public class ExpiryReminderServiceTests
     [Fact]
     public async Task SendReminders_DayZero_SaysEndsToday()
     {
-        var expiry = DateTimeOffset.UtcNow.AddHours(5);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var expiry = new DateTimeOffset(today.Year, today.Month, today.Day, 23, 59, 59, TimeSpan.Zero);
         var full = FullClient("user@example.com", 555, "Cancelled 2026-01-01")
             with
         {

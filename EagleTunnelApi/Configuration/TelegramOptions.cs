@@ -25,4 +25,6 @@ public sealed class TelegramOptions
     public int ReferralBonusDays { get; set; } = 30;
 
     public int ReminderHourUtc { get; set; } = 9;
+
+    public int TrialDurationHours { get; set; } = 2;
 }

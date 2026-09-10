@@ -41,6 +41,9 @@ public sealed class TelegramOptionsValidator(IHostEnvironment environment) : IVa
         if (options.ReminderHourUtc < 0 || options.ReminderHourUtc > 23)
             errors.Add("Telegram:ReminderHourUtc must be between 0 and 23.");
 
+        if (options.TrialDurationHours < 0 || options.TrialDurationHours > 168)
+            errors.Add("Telegram:TrialDurationHours must be between 0 and 168.");
+
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 }

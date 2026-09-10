@@ -15,7 +15,11 @@ public enum AdminAction
     ResetTrafficTarget,
     LinkTarget,
     LinkTelegramId,
-    NudgeTarget
+    NudgeTarget,
+    RegisterTarget,
+    RegisterReferrer,
+    ChangeEmailTarget,
+    ChangeEmailValue
 }
 
 public enum RegistrationStep
@@ -37,6 +41,10 @@ public sealed class UserSession
 
     public string? AdminTargetEmail { get; set; }
 
+    public List<string>? AdminCandidates { get; set; }
+
+    public AdminAction AdminCandidatesAction { get; set; } = AdminAction.None;
+
     public RegistrationStep RegistrationStep { get; set; } = RegistrationStep.None;
 
     public string? PendingEmail { get; set; }
@@ -46,6 +54,10 @@ public sealed class UserSession
     public string? PendingReferrerEmail { get; set; }
 
     public bool CollectReferrer { get; set; }
+
+    public bool FriendInviteActive { get; set; }
+
+    public bool ReturnToReferral { get; set; }
 }
 
 public sealed class SessionStore

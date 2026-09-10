@@ -110,6 +110,9 @@ public class SubscriptionProvisioner(
         {
             Enable = enable,
             ExpiryTime = resolvedExpiry ?? client.ExpiryTime,
+            Comment = expiryTimeMs.HasValue && ReferralService.HasTrialTag(client.Comment)
+                ? ReferralService.ClearTrialTag(client.Comment)
+                : client.Comment,
             InboundIds = _telegramOptions.DefaultInboundIds.ToList()
         };
 

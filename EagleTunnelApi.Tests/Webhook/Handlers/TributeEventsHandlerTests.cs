@@ -706,6 +706,73 @@ public class TributeEventsHandlerTests
         Assert.Empty(bot.Requests);
     }
 
+    [Fact]
+    public async Task HandleNewSubscription_TrialRefereeWithTag_GrantsBonus()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referee = TaggedRefereeClient() with
+        {
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+            Comment = TaggedRefereeClient().Comment + " · Trial until 2099-01-01 00:00 UTC"
+        };
+        var referrer = ReferrerClient();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/tgId/777")
+                return StubHttpMessageHandler.Json(ClientListJson(referrer));
+
+            if (path == "/admin/panel/api/clients/get/friend@example.com")
+                return StubHttpMessageHandler.Json(ClientByEmailJson(referrer));
+
+            if (path.StartsWith("/admin/panel/api/clients/update/", StringComparison.Ordinal))
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
+
+        Assert.Contains(requests,
+            r => r.Method == HttpMethod.Post &&
+                r.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/update/{referrer.Email}");
+        Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+    }
+
+    [Fact]
+    public async Task HandleNewSubscription_Activation_StripsTrialTag()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var trialing = SampleClient() with { Comment = "some comment · Trial until 2099-01-01 00:00 UTC" };
+
+        var (handler, _) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(trialing));
+
+            if (path == $"/admin/panel/api/clients/update/{trialing.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleNewSubscription(NewSubscriptionEvent(), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests, r => r.Method == HttpMethod.Post);
+        var comment = (await ReadBodyJson(updateRequest)).GetProperty("comment").GetString()!;
+
+        Assert.DoesNotContain("Trial until", comment);
+        Assert.Contains("some comment", comment);
+    }
+
     private static CancelledSubscription CancelledSubscriptionEvent(long telegramUserId = TelegramId)
     {
         return new CancelledSubscription(

@@ -7,6 +7,7 @@ using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace EagleTunnelApi.Telegram;
 
@@ -72,6 +73,12 @@ public sealed class TelegramHandlers : IUpdateHandler
         }
 
         var session = _sessionStore.Get(telegramId);
+
+        if (session.FriendInviteActive)
+        {
+            await HandleFriendInviteInput(botClient, telegramId, trimmed, cancellationToken);
+            return;
+        }
 
         if (session.RegistrationStep != RegistrationStep.None)
         {
@@ -143,14 +150,21 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (ReferralService.IsLegacyEmail(userDetails.Username))
         {
-            var needsReferrer = !userDetails.HasEverBeenProvisioned();
+            if (userDetails.HasEverBeenProvisioned())
+            {
+                _logger.LogInformation(
+                    "Provisioned legacy account keeps its login, no migration. TelegramId: {TelegramId}",
+                    telegramId);
+
+                await RenderMainMenu(botClient, telegramId, userDetails, cancellationToken);
+                return;
+            }
 
             _logger.LogInformation(
-                "Legacy account detected, starting email migration. TelegramId: {TelegramId}, CollectReferrer: {Collect}",
-                telegramId, needsReferrer);
+                "Legacy account detected, starting email migration. TelegramId: {TelegramId}", telegramId);
 
             await StartEmailRegistration(botClient, telegramId, null,
-                needsReferrer, true, cancellationToken);
+                true, true, cancellationToken);
             return;
         }
 
@@ -158,7 +172,8 @@ public sealed class TelegramHandlers : IUpdateHandler
     }
 
     private async Task StartEmailRegistration(ITelegramBotClient botClient, long telegramId,
-        string? startPayload, bool collectReferrer, bool isMigration, CancellationToken cancellationToken)
+        string? startPayload, bool collectReferrer, bool isMigration, CancellationToken cancellationToken,
+        string? introOverride = null)
     {
         var session = _sessionStore.Get(telegramId);
         session.RegistrationStep = RegistrationStep.AwaitingEmail;
@@ -188,9 +203,13 @@ public sealed class TelegramHandlers : IUpdateHandler
                 }
         }
 
-        var intro = isMigration
-            ? "👋 Welcome back! We've upgraded accounts to use email addresses.\n\n"
-            : "👋 Welcome to Eagle Tunnel Network!\n\n";
+        var intro = introOverride
+            ?? (isMigration
+                ? "👋 Welcome back! We've upgraded accounts to use email addresses.\n\n"
+                : "👋 Welcome to Eagle Tunnel Network!\n\n");
+
+        if (introOverride is null && _telegramOptions.TrialDurationHours > 0)
+            intro += $"🎁 New accounts start with a {_telegramOptions.TrialDurationHours}-hour free trial.\n\n";
 
         await botClient.SendMessage(telegramId,
             intro + "To create your account, please reply with your **email address**:",
@@ -209,6 +228,10 @@ public sealed class TelegramHandlers : IUpdateHandler
             telegramId, userDetails.Status);
 
         var text = BuildStatusText(userDetails);
+
+        if (ReferralService.HasTrialTag(userDetails.Comment))
+            text += "\n\n🎁 You're on a free trial — subscribe before it ends to stay connected.";
+
         activeSession.MainMenuText = text;
 
         _logger.LogInformation("Rendering start menu. TelegramId: {TelegramId}", telegramId);
@@ -279,7 +302,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (session.RegistrationStep == RegistrationStep.AwaitingEmail)
         {
-            await HandleEmailInput(botClient, telegramId, text, cancellationToken);
+            await HandleEmailInput(botClient, telegramId, from, text, cancellationToken);
             return;
         }
 
@@ -287,8 +310,8 @@ public sealed class TelegramHandlers : IUpdateHandler
             await HandleManualReferrerInput(botClient, telegramId, from, text, cancellationToken);
     }
 
-    private async Task HandleEmailInput(ITelegramBotClient botClient, long telegramId, string text,
-        CancellationToken cancellationToken)
+    private async Task HandleEmailInput(ITelegramBotClient botClient, long telegramId, User? from,
+        string text, CancellationToken cancellationToken)
     {
         var session = _sessionStore.Get(telegramId);
         var email = ReferralService.NormalizeEmail(text);
@@ -317,6 +340,13 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (existing?.Client is not null && existing.Client.TgId != telegramId)
         {
+            if (existing.Client.TgId <= 0)
+            {
+                await ClaimInvitedAccountAsync(botClient, telegramId, from, existing.Client,
+                    cancellationToken);
+                return;
+            }
+
             await botClient.SendMessage(telegramId,
                 "❌ That email is already registered. Please enter a different email address:",
                 cancellationToken: cancellationToken);
@@ -545,6 +575,13 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.PendingReferrerTgId = null;
         session.PendingReferrerEmail = null;
 
+        if (session.ReturnToReferral)
+        {
+            session.ReturnToReferral = false;
+            await SendReferralLinkAsync(botClient, telegramId, cancellationToken);
+            return;
+        }
+
         var userDetails = await GetUserDetails(telegramId, cancellationToken);
         if (userDetails is null)
         {
@@ -572,11 +609,13 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task CreateRegisteredClientAsync(long telegramId, User? from, string email,
         long? referrerTgId, string? referrerEmail, CancellationToken cancellationToken)
     {
-        var expiryTimeMs = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds();
+        var (enable, expiryTimeMs, trialEnds) = NewAccountState();
         var comment = BuildReferralComment(BuildPanelComment(telegramId, from), referrerTgId, referrerEmail);
 
+        if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
+
         var payload = new CreateClientPayload(
-            PanelClientDefaults.CreateClient(email, false, expiryTimeMs, telegramId, comment),
+            PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, telegramId, comment),
             _telegramOptions.DefaultInboundIds.ToList()
         );
 
@@ -595,7 +634,16 @@ public sealed class TelegramHandlers : IUpdateHandler
             if (existing is null) throw;
         }
 
-        await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
+        if (!enable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
+    }
+
+    private (bool Enable, long ExpiryTimeMs, DateTimeOffset? TrialEnds) NewAccountState()
+    {
+        if (_telegramOptions.TrialDurationHours <= 0)
+            return (false, DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds(), null);
+
+        var ends = DateTimeOffset.UtcNow.AddHours(_telegramOptions.TrialDurationHours);
+        return (true, ends.ToUnixTimeMilliseconds(), ends);
     }
 
     private async Task UpdateReferralAttributionAsync(PanelClient client, long? referrerTgId,
@@ -611,13 +659,33 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task MigrateClientEmailAsync(PanelClient client, string email, long? referrerTgId,
         string? referrerEmail, CancellationToken cancellationToken)
     {
+        if (ReferralService.HasEverBeenProvisioned(client))
+        {
+            await _panelClient.UpdateClientAsync(client.Email,
+                client.ToUpdateRequest() with { Email = email }, cancellationToken);
+
+            _logger.LogInformation("Renamed provisioned client email, state preserved. OldEmail: {Old}, NewEmail: {New}",
+                client.Email, email);
+            return;
+        }
+
         var comment = BuildReferralComment(
             ReferralService.ClearReferralAttribution(client.Comment ?? ""), referrerTgId, referrerEmail);
+        var (enable, expiryTimeMs, trialEnds) = NewAccountState();
+
+        if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
+
+        var migrated = client.ToUpdateRequest() with
+        {
+            Email = email,
+            Comment = comment,
+            Enable = enable,
+            ExpiryTime = expiryTimeMs
+        };
 
         try
         {
-            await _panelClient.UpdateClientAsync(client.Email,
-                client.ToUpdateRequest() with { Email = email, Comment = comment }, cancellationToken);
+            await _panelClient.UpdateClientAsync(client.Email, migrated, cancellationToken);
 
             _logger.LogInformation("Migrated client email in place. OldEmail: {Old}, NewEmail: {New}",
                 client.Email, email);
@@ -630,7 +698,7 @@ public sealed class TelegramHandlers : IUpdateHandler
                 client.Email, email);
         }
 
-        var recreated = client.ToUpdateRequest() with { Email = email, Comment = comment };
+        var recreated = migrated;
         var payload = new CreateClientPayload(
             new CreateClientRequest(
                 recreated.Email, recreated.Enable, recreated.ExpiryTime, recreated.TotalGB, recreated.TgId,
@@ -726,6 +794,10 @@ public sealed class TelegramHandlers : IUpdateHandler
                 await SkipDeepLinkReferrer(botClient, telegramId.Value, callbackQuery.From,
                     cancellationToken);
                 break;
+
+            case MenuService.FriendRegister:
+                await StartFriendInvite(botClient, telegramId.Value, cancellationToken);
+                break;
         }
 
         await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
@@ -739,18 +811,50 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task ShowReferralScreen(ITelegramBotClient botClient, long telegramId, int messageId,
         CancellationToken cancellationToken)
     {
+        var userDetails = await GetUserDetails(telegramId, cancellationToken);
+
+        if (userDetails is not null && ReferralService.IsLegacyEmail(userDetails.Username))
+        {
+            _logger.LogInformation(
+                "Legacy account opened referrals, requiring one-time email update. TelegramId: {TelegramId}",
+                telegramId);
+
+            await StartEmailRegistration(botClient, telegramId, null,
+                !userDetails.HasEverBeenProvisioned(), true, cancellationToken,
+                "🎁 To share your invite link, set your login email address below.\n" +
+                "This is a one-time update — afterwards the link is yours to share.\n\n");
+
+            _sessionStore.Get(telegramId).ReturnToReferral = true;
+            return;
+        }
+
         var link = ReferralService.BuildReferralLink(_telegramOptions.BotUsername, telegramId);
 
-        await botClient.EditMessageText(telegramId, messageId,
-            "🎁 *Invite Friends — Get 1 Month Free*\n\n" +
+        await botClient.EditMessageText(telegramId, messageId, ReferralScreenText(),
+            ParseMode.Markdown,
+            MenuService.ReferralMenu(link, _telegramOptions.SupportUrl),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task SendReferralLinkAsync(ITelegramBotClient botClient, long telegramId,
+        CancellationToken cancellationToken)
+    {
+        var link = ReferralService.BuildReferralLink(_telegramOptions.BotUsername, telegramId);
+
+        await botClient.SendMessage(telegramId, ReferralScreenText(),
+            ParseMode.Markdown,
+            replyMarkup: MenuService.ReferralMenu(link, _telegramOptions.SupportUrl),
+            cancellationToken: cancellationToken);
+    }
+
+    private static string ReferralScreenText()
+    {
+        return "🎁 *Invite Friends — Get 1 Month Free*\n\n" +
             "1️⃣ Share your invite link below.\n" +
             "2️⃣ Your friend registers and subscribes.\n" +
             "3️⃣ You get **+30 days** of VPN time.\n\n" +
             "Tip: once your bonus lands, cancel your Tribute renewal so you aren't billed while " +
-            "covered — message support if you'd like the step-by-step video guide.",
-            ParseMode.Markdown,
-            MenuService.ReferralMenu(link, _telegramOptions.SupportUrl),
-            cancellationToken: cancellationToken);
+            "covered — message support if you'd like the step-by-step video guide.";
     }
 
     private async Task ConfirmDeepLinkReferrer(ITelegramBotClient botClient, long telegramId, User? from,
@@ -794,6 +898,233 @@ public sealed class TelegramHandlers : IUpdateHandler
         await CompleteRegistrationAsync(botClient, telegramId, from, cancellationToken);
     }
 
+    private async Task StartFriendInvite(ITelegramBotClient botClient, long telegramId,
+        CancellationToken cancellationToken)
+    {
+        PanelClientResponse? own;
+        try
+        {
+            own = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
+        }
+        catch (PanelApiException ex)
+        {
+            _logger.LogWarning(ex, "Friend invite lookup failed. TelegramId: {TelegramId}", telegramId);
+            own = null;
+        }
+
+        if (own?.Client is null)
+        {
+            await botClient.SendMessage(telegramId,
+                "You don't have an account yet — please use /start to register first.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        _sessionStore.Get(telegramId).FriendInviteActive = true;
+
+        await botClient.SendMessage(telegramId,
+            "📝 Reply with your friend's **email address** and we'll create their account " +
+            "with you as referrer. They'll link it when they start the bot.\n\n(/start to cancel)",
+            ParseMode.Markdown,
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task HandleFriendInviteInput(ITelegramBotClient botClient, long telegramId, string text,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        var email = ReferralService.NormalizeEmail(text);
+
+        if (!ReferralService.IsValidEmail(email))
+        {
+            await botClient.SendMessage(telegramId,
+                "❌ That doesn't look like a valid email address. Please try again (/start to cancel):",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        PanelClientResponse? own = null;
+        PanelClientResponse? existing = null;
+        try
+        {
+            own = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
+            existing = await _panelClient.GetClientByEmailAsync(email!, cancellationToken);
+        }
+        catch (PanelApiException ex)
+        {
+            _logger.LogWarning(ex, "Friend invite lookup failed. Email: {Email}", email);
+        }
+
+        if (own?.Client is null)
+        {
+            session.FriendInviteActive = false;
+            await botClient.SendMessage(telegramId,
+                "You don't have an account yet — please use /start to register first.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (email!.Equals(own.Client.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            await botClient.SendMessage(telegramId,
+                "🙂 That's your own email — enter your friend's email instead (/start to cancel).",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (existing?.Client is not null)
+        {
+            session.FriendInviteActive = false;
+
+            if (existing.Client.TgId <= 0)
+            {
+                await botClient.SendMessage(telegramId,
+                    $"ℹ️ `{email}` was already invited and is still unclaimed — " +
+                    "they'll link it when they start the bot.",
+                    ParseMode.Markdown,
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
+            await botClient.SendMessage(telegramId,
+                $"❌ `{email}` is already registered.",
+                ParseMode.Markdown,
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        var inviterEmail = own.Client.Email;
+        var (enable, expiryTimeMs, trialEnds) = NewAccountState();
+        var comment =
+            $"Invited by {inviterEmail} · Referrer tgId: {telegramId} · Referred by: {inviterEmail}";
+
+        if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
+
+        try
+        {
+            await _panelClient.AddClientAsync(new CreateClientPayload(
+                PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, 0, comment),
+                _telegramOptions.DefaultInboundIds.ToList()), cancellationToken);
+
+            if (!enable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
+        }
+        catch (PanelApiException ex)
+        {
+            _logger.LogError(ex, "Friend invite creation failed. Email: {Email}", email);
+            await botClient.SendMessage(telegramId,
+                "❌ Something went wrong creating the invite. Please try again.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        session.FriendInviteActive = false;
+        _logger.LogInformation("Friend invite created. Email: {Email}, Inviter: {Inviter}", email, inviterEmail);
+
+        await botClient.SendMessage(telegramId,
+            $"✅ Invite created for `{email}` — they'll be linked as your referral " +
+            "when they start the bot and enter this email.",
+            ParseMode.Markdown,
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task ClaimInvitedAccountAsync(ITelegramBotClient botClient, long telegramId, User? from,
+        PanelClient invited, CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        var comment = ReferralService.AppendTag(invited.Comment, $"Telegram ID: {telegramId}");
+
+        if (!string.IsNullOrWhiteSpace(from?.Username))
+            comment = ReferralService.AppendTag(comment, $"@{from.Username}");
+
+        try
+        {
+            await _panelClient.UpdateClientAsync(invited.Email,
+                invited.ToUpdateRequest() with { TgId = telegramId, Comment = comment }, cancellationToken);
+        }
+        catch (PanelApiException ex)
+        {
+            _logger.LogError(ex, "Invite claim failed. Email: {Email}", invited.Email);
+            await botClient.SendMessage(telegramId,
+                "❌ Something went wrong linking your account. Please try /start again.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        _logger.LogInformation("Invite claimed. Email: {Email}, TelegramId: {TelegramId}",
+            invited.Email, telegramId);
+
+        await RetireOwnLegacyDuplicateAsync(telegramId, invited.Email, cancellationToken);
+
+        session.PendingEmail = invited.Email;
+
+        var hasReferrer = ReferralService.TryParseReferredBy(invited.Comment, out _, out _);
+
+        if (!hasReferrer && !ReferralService.HasEverBeenProvisioned(invited))
+        {
+            session.RegistrationStep = RegistrationStep.AwaitingReferrer;
+            session.CollectReferrer = true;
+            session.PendingReferrerTgId = null;
+            session.PendingReferrerEmail = null;
+            await PromptReferrerAsync(botClient, telegramId, cancellationToken);
+            return;
+        }
+
+        session.RegistrationStep = RegistrationStep.None;
+        session.CollectReferrer = false;
+
+        var userDetails = await GetUserDetails(telegramId, cancellationToken);
+
+        if (userDetails is null)
+        {
+            await botClient.SendMessage(telegramId,
+                "❌ We couldn't find your account yet. Please use /start again shortly.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        await RenderMainMenu(botClient, telegramId, userDetails, cancellationToken);
+    }
+
+    private async Task RetireOwnLegacyDuplicateAsync(long telegramId, string claimedEmail,
+        CancellationToken cancellationToken)
+    {
+        PanelClient? legacy;
+        try
+        {
+            legacy = (await _panelClient.GetClientByEmailAsync($"tg{telegramId}", cancellationToken))?.Client;
+        }
+        catch (Exception ex)
+        {
+            // Best effort only: unknown email surfaces as a failure, transport errors must not break the claim.
+            _logger.LogWarning(ex, "Legacy duplicate check failed while claiming. TelegramId: {TelegramId}",
+                telegramId);
+            return;
+        }
+
+        if (legacy is null
+            || legacy.TgId != telegramId
+            || !ReferralService.IsLegacyEmail(legacy.Email)
+            || legacy.Email.Equals(claimedEmail, StringComparison.OrdinalIgnoreCase)
+            || ReferralService.HasEverBeenProvisioned(legacy))
+            return;
+
+        var tombstone = $"{legacy.Email}.merged-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+
+        try
+        {
+            await _panelClient.UpdateClientAsync(legacy.Email,
+                legacy.ToUpdateRequest() with { Email = tombstone, Enable = false }, cancellationToken);
+            await _panelClient.BulkDisableClientsAsync([tombstone], cancellationToken);
+
+            _logger.LogInformation("Retired legacy duplicate on claim. Old: {Old}, Tombstone: {New}",
+                legacy.Email, tombstone);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retire legacy duplicate. Email: {Email}", legacy.Email);
+        }
+    }
+
     private async Task ShowAdminMenu(ITelegramBotClient botClient, long telegramId,
         CancellationToken cancellationToken)
     {
@@ -831,6 +1162,15 @@ public sealed class TelegramHandlers : IUpdateHandler
         string data, CancellationToken cancellationToken)
     {
         var session = _sessionStore.Get(telegramId);
+
+        if (data.StartsWith(MenuService.AdminPick + ":", StringComparison.Ordinal))
+        {
+            await PickAdminCandidate(botClient, telegramId, data, cancellationToken);
+            return;
+        }
+
+        session.AdminCandidates = null;
+        session.AdminCandidatesAction = AdminAction.None;
 
         switch (data)
         {
@@ -902,6 +1242,20 @@ public sealed class TelegramHandlers : IUpdateHandler
                     MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
                 return;
 
+            case MenuService.AdminRegister:
+                session.AdminAction = AdminAction.RegisterTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "➕ Enter the **new user's email** to register:", ParseMode.Markdown,
+                    MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminChangeEmail:
+                session.AdminAction = AdminAction.ChangeEmailTarget;
+                await botClient.EditMessageText(telegramId, messageId,
+                    "✏️ Enter the account's **current email or Telegram ID**:", ParseMode.Markdown,
+                    MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
             case MenuService.AdminList:
                 await ShowAdminList(botClient, telegramId, messageId, 0, cancellationToken);
                 return;
@@ -956,6 +1310,9 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (data.StartsWith(MenuService.AdminConfirmNudge + ":", StringComparison.Ordinal))
             await ExecuteAdminNudge(botClient, telegramId, messageId, data, cancellationToken);
+
+        if (data.StartsWith(MenuService.AdminConfirmChangeEmail + ":", StringComparison.Ordinal))
+            await ExecuteAdminChangeEmail(botClient, telegramId, messageId, data, cancellationToken);
     }
 
     private async Task HandleAdminTextInput(ITelegramBotClient botClient, long telegramId, string text,
@@ -967,35 +1324,19 @@ public sealed class TelegramHandlers : IUpdateHandler
         switch (session.AdminAction)
         {
             case AdminAction.Lookup:
-                var lookupClient = await ResolveAdminTarget(input, cancellationToken);
-
-                session.AdminAction = AdminAction.None;
-
-                if (lookupClient is null)
-                {
-                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
-                        ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
-                        cancellationToken: cancellationToken);
-                    return;
-                }
-
-                await ShowAdminLookupResult(botClient, telegramId, lookupClient, cancellationToken);
-                return;
-
             case AdminAction.GrantTarget:
-                var grantClient = await ResolveAdminTarget(input, cancellationToken);
-                if (grantClient is null)
-                {
-                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
-                        ParseMode.Markdown, cancellationToken: cancellationToken);
-                    return;
-                }
+            case AdminAction.BanTarget:
+            case AdminAction.UnbanTarget:
+            case AdminAction.ResetTrafficTarget:
+            case AdminAction.NudgeTarget:
+            case AdminAction.LimitTarget:
+            case AdminAction.LinkTarget:
+            case AdminAction.ChangeEmailTarget:
+                var resolvedTarget = await TryResolveAdminTargetAsync(botClient, telegramId, input,
+                    cancellationToken);
+                if (resolvedTarget is null) return;
 
-                session.AdminTargetEmail = grantClient.Email;
-                session.AdminAction = AdminAction.GrantDays;
-                await botClient.SendMessage(telegramId,
-                    $"➕ How many days to grant to **{grantClient.Email}**?", ParseMode.Markdown,
-                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                await ContinueAdminTargetAsync(botClient, telegramId, resolvedTarget, cancellationToken);
                 return;
 
             case AdminAction.GrantDays:
@@ -1022,56 +1363,6 @@ public sealed class TelegramHandlers : IUpdateHandler
                     cancellationToken: cancellationToken);
                 return;
 
-            case AdminAction.BanTarget:
-            case AdminAction.UnbanTarget:
-            case AdminAction.ResetTrafficTarget:
-            case AdminAction.NudgeTarget:
-                var targetClient = await ResolveAdminTarget(input, cancellationToken);
-                if (targetClient is null)
-                {
-                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
-                        ParseMode.Markdown, cancellationToken: cancellationToken);
-                    return;
-                }
-
-                var action = session.AdminAction switch
-                {
-                    AdminAction.BanTarget => MenuService.AdminConfirmBan,
-                    AdminAction.UnbanTarget => MenuService.AdminConfirmUnban,
-                    AdminAction.NudgeTarget => MenuService.AdminConfirmNudge,
-                    _ => MenuService.AdminConfirmReset
-                };
-                var emoji = session.AdminAction switch
-                {
-                    AdminAction.BanTarget => "🚫 Ban",
-                    AdminAction.UnbanTarget => "✅ Unban",
-                    AdminAction.NudgeTarget => "📨 Send reminder to",
-                    _ => "♻️ Reset traffic"
-                };
-
-                session.AdminAction = AdminAction.None;
-                await botClient.SendMessage(telegramId,
-                    $"{emoji} `{targetClient.Email}`?", ParseMode.Markdown,
-                    replyMarkup: MenuService.AdminConfirmMenu(action, targetClient.Email),
-                    cancellationToken: cancellationToken);
-                return;
-
-            case AdminAction.LimitTarget:
-                var limitClient = await ResolveAdminTarget(input, cancellationToken);
-                if (limitClient is null)
-                {
-                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
-                        ParseMode.Markdown, cancellationToken: cancellationToken);
-                    return;
-                }
-
-                session.AdminTargetEmail = limitClient.Email;
-                session.AdminAction = AdminAction.LimitValue;
-                await botClient.SendMessage(telegramId,
-                    $"📱 How many connected devices for **{limitClient.Email}**?", ParseMode.Markdown,
-                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
-                return;
-
             case AdminAction.LimitValue:
                 if (!int.TryParse(input, out var limit) || limit < 0)
                 {
@@ -1093,22 +1384,6 @@ public sealed class TelegramHandlers : IUpdateHandler
                     $"➡️ Set device limit to **{limit}** for `{limitTarget}`?", ParseMode.Markdown,
                     replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmLimit, $"{limitTarget}:{limit}"),
                     cancellationToken: cancellationToken);
-                return;
-
-            case AdminAction.LinkTarget:
-                var linkClient = await ResolveAdminTarget(input, cancellationToken);
-                if (linkClient is null)
-                {
-                    await botClient.SendMessage(telegramId, $"❌ No client found for `{input}`.",
-                        ParseMode.Markdown, cancellationToken: cancellationToken);
-                    return;
-                }
-
-                session.AdminTargetEmail = linkClient.Email;
-                session.AdminAction = AdminAction.LinkTelegramId;
-                await botClient.SendMessage(telegramId,
-                    $"🔗 Enter the **Telegram ID** to link to `{linkClient.Email}`:", ParseMode.Markdown,
-                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
                 return;
 
             case AdminAction.LinkTelegramId:
@@ -1133,6 +1408,182 @@ public sealed class TelegramHandlers : IUpdateHandler
                     replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmLink, $"{linkTarget}:{tgId}"),
                     cancellationToken: cancellationToken);
                 return;
+
+            case AdminAction.RegisterTarget:
+                var newEmail = ReferralService.NormalizeEmail(input);
+
+                if (!ReferralService.IsValidEmail(newEmail))
+                {
+                    await botClient.SendMessage(telegramId,
+                        "❌ That doesn't look like a valid email address. Please try again.",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                PanelClient? clash = await ResolveAdminTarget(newEmail!, cancellationToken);
+
+                if (clash is not null)
+                {
+                    await botClient.SendMessage(telegramId,
+                        $"❌ `{newEmail}` is already registered.",
+                        ParseMode.Markdown, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                session.AdminTargetEmail = newEmail;
+                session.AdminAction = AdminAction.RegisterReferrer;
+                await botClient.SendMessage(telegramId,
+                    $"➕ Register `{newEmail}`. Reply with the referrer's **email address**, or /skip for none:",
+                    ParseMode.Markdown, cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.RegisterReferrer:
+                var pendingEmail = session.AdminTargetEmail;
+
+                if (pendingEmail is null)
+                {
+                    await ShowAdminMenu(botClient, telegramId, cancellationToken);
+                    return;
+                }
+
+                if (input.Equals("/skip", StringComparison.OrdinalIgnoreCase))
+                {
+                    session.AdminAction = AdminAction.None;
+                    session.AdminTargetEmail = null;
+                    await CreateAdminRegisteredClientAsync(botClient, telegramId, pendingEmail, null, null,
+                        cancellationToken);
+                    return;
+                }
+
+                var candidate = ReferralService.NormalizeEmail(input);
+
+                if (!ReferralService.IsValidEmail(candidate))
+                {
+                    await botClient.SendMessage(telegramId,
+                        "❌ That doesn't look like a valid email address. Please try again, or /skip.",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                PanelClient? directHit = null;
+                var isTgIdInput = long.TryParse(candidate, out var refTgId) && refTgId > 0;
+
+                if (isTgIdInput)
+                {
+                    try
+                    {
+                        directHit = (await _panelClient.GetClientByTelegramIdAsync(refTgId,
+                            cancellationToken))?.Client;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Admin referrer lookup failed. Input: {Input}", candidate);
+                        await botClient.SendMessage(telegramId,
+                            "❌ Couldn't look that up right now. Please try again, or /skip.",
+                            cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    if (directHit is null)
+                    {
+                        await botClient.SendMessage(telegramId, $"❌ No client found for `{candidate}`.",
+                            ParseMode.Markdown, cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    await ContinueAdminTargetAsync(botClient, telegramId, directHit, cancellationToken);
+                    return;
+                }
+
+                try
+                {
+                    directHit = (await _panelClient.GetClientByEmailAsync(candidate!,
+                        cancellationToken))?.Client;
+                }
+                catch (PanelApiException)
+                {
+                    directHit = null;
+                }
+
+                if (directHit is not null)
+                {
+                    await ContinueAdminTargetAsync(botClient, telegramId, directHit, cancellationToken);
+                    return;
+                }
+
+                var refMatches = await SearchClientEmailsAsync(botClient, telegramId, candidate!,
+                    cancellationToken);
+                if (refMatches is null) return;
+
+                refMatches.RemoveAll(e => e.Equals(candidate, StringComparison.OrdinalIgnoreCase));
+
+                if (refMatches.Count == 0)
+                {
+                    session.AdminAction = AdminAction.None;
+                    session.AdminTargetEmail = null;
+                    await botClient.SendMessage(telegramId,
+                        $"ℹ️ `{candidate}` isn't registered — saving as a pending referrer. " +
+                        "It counts if they register before the new user subscribes.",
+                        ParseMode.Markdown, cancellationToken: cancellationToken);
+                    await CreateAdminRegisteredClientAsync(botClient, telegramId, pendingEmail, null,
+                        candidate, cancellationToken);
+                    return;
+                }
+
+                if (refMatches.Count == 1)
+                {
+                    PanelClient? single = null;
+                    try
+                    {
+                        single = (await _panelClient.GetClientByEmailAsync(refMatches[0],
+                            cancellationToken))?.Client;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Admin referrer lookup failed. Email: {Email}", refMatches[0]);
+                    }
+
+                    if (single is null)
+                    {
+                        await botClient.SendMessage(telegramId,
+                            "❌ Couldn't load that account right now. Please try again, or /skip.",
+                            cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    await ContinueAdminTargetAsync(botClient, telegramId, single, cancellationToken);
+                    return;
+                }
+
+                await SendPickListAsync(botClient, telegramId, refMatches, cancellationToken);
+                return;
+
+            case AdminAction.ChangeEmailValue:
+                var changeTarget = session.AdminTargetEmail;
+                if (changeTarget is null)
+                {
+                    await ShowAdminMenu(botClient, telegramId, cancellationToken);
+                    return;
+                }
+
+                var newAddress = ReferralService.NormalizeEmail(input);
+
+                if (!ReferralService.IsValidEmail(newAddress))
+                {
+                    await botClient.SendMessage(telegramId,
+                        "❌ That doesn't look like a valid email address. Please try again.",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                session.AdminAction = AdminAction.None;
+                session.AdminTargetEmail = null;
+                await botClient.SendMessage(telegramId,
+                    $"➡️ Change `{changeTarget}` to `{newAddress}`?", ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmChangeEmail,
+                        $"{changeTarget}:{newAddress}"),
+                    cancellationToken: cancellationToken);
+                return;
         }
 
         await ShowAdminMenu(botClient, telegramId, cancellationToken);
@@ -1149,6 +1600,260 @@ public sealed class TelegramHandlers : IUpdateHandler
             _logger.LogError(ex, "Admin target resolution failed. Target: {Target}", input);
             return null;
         }
+    }
+
+    private async Task<List<string>?> SearchClientEmailsAsync(ITelegramBotClient botClient, long adminId,
+        string term, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<PanelClientSummary> all;
+        try
+        {
+            all = await _panelClient.GetAllClientsAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Admin client search failed. Term: {Term}", term);
+            await botClient.SendMessage(adminId,
+                "❌ Couldn't search right now. Please try again shortly.",
+                cancellationToken: cancellationToken);
+            return null;
+        }
+
+        var lower = term.ToLowerInvariant();
+        return all.Select(c => c.Email)
+            .Where(e => e.ToLowerInvariant().Contains(lower))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(e => e, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task SendPickListAsync(ITelegramBotClient botClient, long adminId, List<string> matches,
+        CancellationToken cancellationToken)
+    {
+        const int maxPicks = 10;
+        var session = _sessionStore.Get(adminId);
+        var shown = matches.Take(maxPicks).ToList();
+        session.AdminCandidates = shown;
+        session.AdminCandidatesAction = session.AdminAction;
+
+        var rows = shown.Select((email, i) => new[]
+        {
+            InlineKeyboardButton.WithCallbackData(
+                $"{i + 1}. {(email.Length > 32 ? email[..32] + "…" : email)}",
+                $"{MenuService.AdminPick}:{i}")
+        });
+
+        var note = matches.Count > shown.Count
+            ? $"\n\nShowing {shown.Count} of {matches.Count} — refine your search."
+            : "";
+
+        await botClient.SendMessage(adminId,
+            $"🔍 Multiple matches:{note}\nPick one:",
+            replyMarkup: new InlineKeyboardMarkup(rows),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task<PanelClient?> TryResolveAdminTargetAsync(ITelegramBotClient botClient, long adminId,
+        string input, CancellationToken cancellationToken)
+    {
+        if (long.TryParse(input, out var tgId) && tgId > 0)
+        {
+            PanelClient? byId = null;
+            try
+            {
+                byId = (await _panelClient.GetClientByTelegramIdAsync(tgId, cancellationToken))?.Client;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Admin target lookup failed. Target: {Target}", input);
+                await botClient.SendMessage(adminId,
+                    "❌ Couldn't load that account right now. Please try again shortly.",
+                    cancellationToken: cancellationToken);
+                return null;
+            }
+
+            if (byId is null)
+            {
+                await botClient.SendMessage(adminId, $"❌ No client found for `{input}`.",
+                    ParseMode.Markdown, cancellationToken: cancellationToken);
+            }
+
+            return byId;
+        }
+
+        try
+        {
+            var exact = (await _panelClient.GetClientByEmailAsync(input, cancellationToken))?.Client;
+            if (exact is not null) return exact;
+        }
+        catch (PanelApiException ex)
+        {
+            _logger.LogWarning(ex, "Admin exact email lookup missed, falling back to search. Input: {Input}",
+                input);
+        }
+
+        var matches = await SearchClientEmailsAsync(botClient, adminId, input, cancellationToken);
+        if (matches is null) return null;
+
+        matches.RemoveAll(e => e.Equals(input, StringComparison.OrdinalIgnoreCase));
+
+        if (matches.Count == 0)
+        {
+            await botClient.SendMessage(adminId, $"❌ No client found for `{input}`.",
+                ParseMode.Markdown, cancellationToken: cancellationToken);
+            return null;
+        }
+
+        if (matches.Count == 1)
+        {
+            try
+            {
+                return (await _panelClient.GetClientByEmailAsync(matches[0], cancellationToken))?.Client;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Admin target lookup failed. Target: {Target}", matches[0]);
+                await botClient.SendMessage(adminId,
+                    "❌ Couldn't load that account right now. Please try again shortly.",
+                    cancellationToken: cancellationToken);
+                return null;
+            }
+        }
+
+        await SendPickListAsync(botClient, adminId, matches, cancellationToken);
+        return null;
+    }
+
+    private async Task ContinueAdminTargetAsync(ITelegramBotClient botClient, long adminId, PanelClient target,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(adminId);
+
+        switch (session.AdminAction)
+        {
+            case AdminAction.Lookup:
+                session.AdminAction = AdminAction.None;
+                await ShowAdminLookupResult(botClient, adminId, target, cancellationToken);
+                return;
+
+            case AdminAction.GrantTarget:
+                session.AdminTargetEmail = target.Email;
+                session.AdminAction = AdminAction.GrantDays;
+                await botClient.SendMessage(adminId,
+                    $"➕ How many days to grant to **{target.Email}**?", ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.BanTarget:
+            case AdminAction.UnbanTarget:
+            case AdminAction.ResetTrafficTarget:
+            case AdminAction.NudgeTarget:
+                var action = session.AdminAction switch
+                {
+                    AdminAction.BanTarget => MenuService.AdminConfirmBan,
+                    AdminAction.UnbanTarget => MenuService.AdminConfirmUnban,
+                    AdminAction.NudgeTarget => MenuService.AdminConfirmNudge,
+                    _ => MenuService.AdminConfirmReset
+                };
+                var emoji = session.AdminAction switch
+                {
+                    AdminAction.BanTarget => "🚫 Ban",
+                    AdminAction.UnbanTarget => "✅ Unban",
+                    AdminAction.NudgeTarget => "📨 Send reminder to",
+                    _ => "♻️ Reset traffic"
+                };
+
+                session.AdminAction = AdminAction.None;
+                await botClient.SendMessage(adminId,
+                    $"{emoji} `{target.Email}`?", ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminConfirmMenu(action, target.Email),
+                    cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.LimitTarget:
+                session.AdminTargetEmail = target.Email;
+                session.AdminAction = AdminAction.LimitValue;
+                await botClient.SendMessage(adminId,
+                    $"📱 How many connected devices for **{target.Email}**?", ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.LinkTarget:
+                session.AdminTargetEmail = target.Email;
+                session.AdminAction = AdminAction.LinkTelegramId;
+                await botClient.SendMessage(adminId,
+                    $"🔗 Enter the **Telegram ID** to link to `{target.Email}`:", ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.ChangeEmailTarget:
+                session.AdminTargetEmail = target.Email;
+                session.AdminAction = AdminAction.ChangeEmailValue;
+                await botClient.SendMessage(adminId,
+                    $"✏️ Enter the **new email** for `{target.Email}`:", ParseMode.Markdown,
+                    replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case AdminAction.RegisterReferrer:
+                var pendingEmail = session.AdminTargetEmail;
+                if (pendingEmail is null)
+                {
+                    await ShowAdminMenu(botClient, adminId, cancellationToken);
+                    return;
+                }
+
+                session.AdminAction = AdminAction.None;
+                session.AdminTargetEmail = null;
+                await CreateAdminRegisteredClientAsync(botClient, adminId, pendingEmail,
+                    target.TgId > 0 ? target.TgId : null, target.Email, cancellationToken);
+                return;
+
+            default:
+                await ShowAdminMenu(botClient, adminId, cancellationToken);
+                return;
+        }
+    }
+
+    private async Task PickAdminCandidate(ITelegramBotClient botClient, long adminId, string data,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(adminId);
+
+        if (!int.TryParse(data[(MenuService.AdminPick.Length + 1)..], out var index) ||
+            session.AdminCandidates is null ||
+            index < 0 || index >= session.AdminCandidates.Count ||
+            session.AdminCandidatesAction != session.AdminAction ||
+            session.AdminAction == AdminAction.None)
+        {
+            session.AdminCandidates = null;
+            await botClient.SendMessage(adminId,
+                "⚠️ That selection expired — please start again from the admin menu.",
+                replyMarkup: MenuService.AdminMenu(),
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        var email = session.AdminCandidates[index];
+        session.AdminCandidates = null;
+
+        PanelClient? target = null;
+        try
+        {
+            target = (await _panelClient.GetClientByEmailAsync(email, cancellationToken))?.Client;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Admin pick lookup failed. Email: {Email}", email);
+        }
+
+        if (target is null)
+        {
+            await botClient.SendMessage(adminId, $"❌ No client found for `{email}`.",
+                ParseMode.Markdown, cancellationToken: cancellationToken);
+            return;
+        }
+
+        await ContinueAdminTargetAsync(botClient, adminId, target, cancellationToken);
     }
 
     private async Task ShowAdminLookupResult(ITelegramBotClient botClient, long adminId, PanelClient client,
@@ -1482,6 +2187,64 @@ public sealed class TelegramHandlers : IUpdateHandler
         await botClient.EditMessageText(telegramId, messageId,
             $"📨 Reminder sent to `{target}`.", ParseMode.Markdown,
             replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+    }
+
+    private async Task CreateAdminRegisteredClientAsync(ITelegramBotClient botClient, long adminId,
+        string email, long? referrerTgId, string? referrerEmail, CancellationToken cancellationToken)
+    {
+        var (enable, expiryTimeMs, trialEnds) = NewAccountState();
+        var comment = "Registered by admin";
+
+        if (referrerTgId is long tgId) comment = ReferralService.AppendTag(comment, $"Referrer tgId: {tgId}");
+
+        if (referrerEmail is not null)
+            comment = ReferralService.WithReferredBy(comment, referrerEmail, pending: referrerTgId is null);
+
+        if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
+
+        try
+        {
+            await _panelClient.AddClientAsync(new CreateClientPayload(
+                PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, 0, comment),
+                _telegramOptions.DefaultInboundIds.ToList()), cancellationToken);
+
+            if (!enable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
+
+            _logger.LogInformation("Admin registered account. Email: {Email}", email);
+
+            await botClient.SendMessage(adminId,
+                $"✅ Account created for `{email}` — they'll link it when they start the bot.",
+                ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
+                cancellationToken: cancellationToken);
+        }
+        catch (PanelApiException ex)
+        {
+            _logger.LogError(ex, "Admin registration failed. Email: {Email}", email);
+            await botClient.SendMessage(adminId,
+                "❌ Registration failed. The email may have been taken just now — please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task ExecuteAdminChangeEmail(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var (target, payload) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmChangeEmail);
+
+        try
+        {
+            await _adminPanelService.ChangeEmailAsync(target, payload, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                $"✏️ Changed `{target}` to `{payload}`.", ParseMode.Markdown,
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Change email failed. Target: {Target}", target);
+            await botClient.EditMessageText(telegramId, messageId, "❌ Change email failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
     }
 
     private async Task EditMainMenu(ITelegramBotClient botClient, long telegramId, int messageId,

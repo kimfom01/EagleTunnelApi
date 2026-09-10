@@ -21,6 +21,8 @@ public interface IAdminPanelService
     Task ResetTrafficAsync(string email, CancellationToken cancellationToken);
 
     Task LinkToTelegramAsync(string email, long telegramId, CancellationToken cancellationToken);
+
+    Task ChangeEmailAsync(string oldEmail, string newEmail, CancellationToken cancellationToken);
 }
 
 public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient panelClient) : IAdminPanelService
@@ -112,6 +114,29 @@ public class AdminPanelService(ILogger<AdminPanelService> logger, IPanelClient p
 
         logger.LogInformation("Linked client to telegram. Email: {Email}, TelegramId: {TelegramId}", client.Email,
             telegramId);
+    }
+
+    public async Task ChangeEmailAsync(string oldEmail, string newEmail, CancellationToken cancellationToken)
+    {
+        var client = await RequireClient(oldEmail, cancellationToken);
+
+        PanelClientResponse? clash = null;
+        try
+        {
+            clash = await panelClient.GetClientByEmailAsync(newEmail, cancellationToken);
+        }
+        catch (PanelApiException ex)
+        {
+            logger.LogWarning(ex, "Email clash check failed, assuming available. Email: {Email}", newEmail);
+        }
+
+        if (clash?.Client is not null)
+            throw new PanelApiException($"Email {newEmail} is already registered.");
+
+        await panelClient.UpdateClientAsync(oldEmail,
+            client.ToUpdateRequest() with { Email = newEmail }, cancellationToken);
+
+        logger.LogInformation("Changed client email. OldEmail: {Old}, NewEmail: {New}", oldEmail, newEmail);
     }
 
     private async Task<PanelClient> RequireClient(string email, CancellationToken cancellationToken)

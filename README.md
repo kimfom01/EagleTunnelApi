@@ -19,13 +19,17 @@ subscription status, and retrieve their VPN link.
 - **Auto-Provisioning:** Automatically creates panel clients with the user's registered email when none exists;
   idempotent under concurrent webhooks.
 - **Referral Program:** Email-based invite links (`t.me/<bot>?start=ref_<telegramId>`); referrers earn bonus days when a
-  referee pays for the first time. See [Referral System](#referral-system).
+  referee pays for the first time. Friends can be pre-registered by email and claim their account on `/start`. See
+  [Referral System](#referral-system).
+- **Free Trial:** Newly registered accounts are enabled for `Telegram:TrialDurationHours` (default `2`) so users can
+  connect immediately; first payment ends the trial and preserves any referral attribution.
 - **Expiry Reminders:** Daily reminders (3 / 2 / 1 / 0 days out) for cancelled, email-migrated accounts approaching
   expiry; instant manual nudges via `/admin` → `📨 Send Reminder`.
 - **Panel Integration:** Fetches, updates, enables/disables clients via the 3X-UI REST API.
 - **Telegram Bot:** `/start` guides new users through email registration (with optional referrer), shows subscription
   status, `/help` points at support, `/referrer` lets unpaid users view or fix their referrer, `/admin` exposes a full
-  account-management console for configured admins.
+  account-management console (lookup, grant, ban/unban, device limit, traffic reset, link, register, change email,
+  nudge) with partial-email search and pick lists, for configured admins.
 - **Modern .NET:** Built with .NET 10.0 and Aspire for local orchestration.
 
 ## Stack
@@ -106,6 +110,7 @@ Configuration is handled via standard ASP.NET Core mechanisms (`appsettings.json
 | `Telegram:BotUsername`        | `Telegram__BotUsername`        | Bot username without `@` (e.g. `EagleTunnelBot`), used to build referral links.              |
 | `Telegram:ReferralBonusDays`  | `Telegram__ReferralBonusDays`  | Free days granted to a referrer on the referee's first payment (default `30`, `0` disables). |
 | `Telegram:ReminderHourUtc`    | `Telegram__ReminderHourUtc`    | Hour of day in UTC (`0`-`23`) when expiry reminders are sent (default `9`).                  |
+| `Telegram:TrialDurationHours` | `Telegram__TrialDurationHours` | Free trial hours for newly registered accounts (default `2`, `0` disables).                  |
 
 ### Example `.env` file:
 
@@ -184,12 +189,22 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
   links (`t.me/<bot>?start=ref_<telegramId>`) pre-fill the referrer and show a Confirm / Edit / Skip screen. Mistyped
   referrers can be fixed with `/referrer` until the first payment.
 - **Invite links:** Every user gets a personal link behind the `🎁 Invite Friends — Get 1 Month Free` menu button.
+  Legacy `tg{id}` accounts are asked for a one-time login-email update when they open that screen.
+- **Pre-registration:** Users can register a friend's email from the invite screen, and admins via `/admin` →
+  `➕ Register Account`. The account waits unlinked (`TgId=0`) and is auto-linked — keeping its referrer — when the
+  friend starts the bot and enters that email.
+- **Free trial:** New (never-provisioned) accounts are enabled for `Telegram:TrialDurationHours` (default `2`) so users
+  can connect immediately; the first payment ends the trial (tag cleared) without touching referral attribution.
 - **Bonus:** When a referred friend pays for the first time (`new_subscription`), the referrer gets
   `Telegram:ReferralBonusDays` (default `30`) added to their VPN expiry. The bonus is recorded as `Referral credit:` in
   the referrer's panel comment and re-applied on every renewal so rebills never absorb it. Referrers are advised to
   cancel their Tribute renewal to enjoy the free month; support provides a step-by-step cancellation video on request.
 - **Eligibility:** Referrals only count for genuinely new subscribers. A referrer can only be attached to accounts that
   never had paid access, each referral pays out exactly once, and self-referrals are blocked.
+- **Email lockdown:** Once an account is active, its login email can only be changed by support/admins (`/admin` →
+  `✏️ Change Email`). Provisioned legacy `tg{id}` accounts keep their login until support migrates them.
+- **Admin search:** Every admin action that takes an email accepts partial matches and offers a pick list when several
+  accounts match, so the exact address, case and all, is never required.
 - **Expiry reminders:** A daily background job (at `Telegram:ReminderHourUtc`) messages cancelled, email-migrated
   accounts 3, 2, 1, and 0 days before expiry with a resubscribe link; `/admin` → `📨 Send Reminder` fires the same
   reminder instantly for any linked account. `/admin` lookup shows referral, credit, and cancellation state per account.
@@ -200,9 +215,10 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 
 Unit tests live in the `EagleTunnelApi.Tests` project (xUnit). They cover webhook signature verification, subscription
 event handling (fetch / update / auto-create / idempotent fallback / error surfacing), referral bonus payout
-(first-payment grant, idempotency, gift/self-referral blocks, pending referrals), cancellation tagging, expiry
-reminders, subscription status derivation, and the Telegram bot flows including the registration wizard and admin
-commands.
+(first-payment grant, idempotency, gift/self-referral blocks, pending referrals, trial referees, trial-tag stripping),
+trial registration, friend pre-registration and claim, admin register/change-email, partial-email pick lists, nudge flow,
+cancellation tagging, expiry reminders, subscription status derivation, and the Telegram bot flows including the
+registration wizard and admin commands.
 
 Run them with:
 

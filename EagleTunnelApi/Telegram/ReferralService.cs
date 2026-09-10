@@ -20,6 +20,8 @@ public static partial class ReferralService
 
     public const string CancelledTagPrefix = "Cancelled ";
 
+    public const string TrialTagPrefix = "Trial until ";
+
     public static string? NormalizeEmail(string? email)
     {
         if (string.IsNullOrWhiteSpace(email)) return null;
@@ -175,12 +177,30 @@ public static partial class ReferralService
 
     public static bool HasEverBeenProvisioned(PanelClient client)
     {
-        return HasEverBeenProvisioned(client.Enable, client.ExpiryTime);
+        return HasEverBeenProvisioned(client.Enable, client.ExpiryTime, client.Comment);
     }
 
-    public static bool HasEverBeenProvisioned(bool enable, long expiryTimeMs)
+    public static bool HasEverBeenProvisioned(bool enable, long expiryTimeMs, string? comment = null)
     {
-        return enable || expiryTimeMs <= DateTimeOffset.UtcNow.AddYears(50).ToUnixTimeMilliseconds();
+        return (enable || expiryTimeMs <= DateTimeOffset.UtcNow.AddYears(50).ToUnixTimeMilliseconds()) &&
+            !HasTrialTag(comment);
+    }
+
+    public static string WithTrialTag(string? comment, DateTimeOffset trialEnds) =>
+        AppendTag(comment, $"{TrialTagPrefix}{trialEnds:yyyy-MM-dd HH:mm} UTC");
+
+    public static bool HasTrialTag(string? comment)
+    {
+        return !string.IsNullOrEmpty(comment) && TrialTagRegex().IsMatch(comment);
+    }
+
+    public static string ClearTrialTag(string? comment)
+    {
+        if (string.IsNullOrEmpty(comment)) return "";
+
+        var updated = TrialTagRegex().Replace(comment, " ");
+        updated = System.Text.RegularExpressions.Regex.Replace(updated, @"\s*·\s*·\s*", " · ");
+        return updated.Trim().Trim('·').Trim();
     }
 
     public static bool IsLegacyEmail(string? email)
@@ -207,6 +227,9 @@ public static partial class ReferralService
 
     [GeneratedRegex(@"\s*·?\s*Cancelled \d{4}-\d{2}-\d{2}\s*·?\s*", RegexOptions.IgnoreCase)]
     private static partial Regex CancelledRegex();
+
+    [GeneratedRegex(@"\s*·?\s*Trial until [^·]*", RegexOptions.IgnoreCase)]
+    private static partial Regex TrialTagRegex();
 
     [GeneratedRegex(@"^tg\d+$", RegexOptions.IgnoreCase)]
     private static partial Regex LegacyEmailRegex();

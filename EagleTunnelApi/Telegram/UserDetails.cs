@@ -19,7 +19,8 @@ public sealed record UserDetails(
     List<int>? InboundIds,
     long UsedTrafficBytes,
     bool Enable,
-    long ExpiryTimeMs)
+    long ExpiryTimeMs,
+    string? Comment)
 {
     public static UserDetails? From(PanelClientResponse? response, string panelBaseUri)
     {
@@ -48,12 +49,13 @@ public sealed record UserDetails(
             response.InboundIds,
             response.UsedTraffic,
             client.Enable,
-            client.ExpiryTime
+            client.ExpiryTime,
+            client.Comment
         );
     }
 
     public bool HasEverBeenProvisioned()
     {
-        return Enable || ExpiryTimeMs <= DateTimeOffset.UtcNow.AddYears(50).ToUnixTimeMilliseconds();
+        return ReferralService.HasEverBeenProvisioned(Enable, ExpiryTimeMs, Comment);
     }
 }

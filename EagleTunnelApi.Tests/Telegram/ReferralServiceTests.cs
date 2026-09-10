@@ -173,6 +173,45 @@ public class ReferralServiceTests
         Assert.Contains("base", cleared);
     }
 
+    [Fact]
+    public void TrialTag_RoundTripsAndClears()
+    {
+        var comment = ReferralService.WithTrialTag("base",
+            new DateTimeOffset(2026, 9, 9, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.True(ReferralService.HasTrialTag(comment));
+        Assert.Contains("Trial until 2026-09-09 12:00", comment);
+        Assert.False(ReferralService.HasTrialTag("base"));
+
+        var cleared = ReferralService.ClearTrialTag(comment);
+        Assert.False(ReferralService.HasTrialTag(cleared));
+        Assert.Contains("base", cleared);
+    }
+
+    [Fact]
+    public void HasEverBeenProvisioned_TrialAccount_IsFalse()
+    {
+        var trial = Client(true,
+            DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds()) with
+        {
+            Comment = "Trial until 2026-09-09 12:00 UTC"
+        };
+
+        Assert.False(ReferralService.HasEverBeenProvisioned(trial));
+    }
+
+    [Fact]
+    public void HasEverBeenProvisioned_PaidAfterTrial_IsTrue()
+    {
+        var paid = Client(true,
+            DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeMilliseconds()) with
+        {
+            Comment = "some comment"
+        };
+
+        Assert.True(ReferralService.HasEverBeenProvisioned(paid));
+    }
+
     [Theory]
     [InlineData("tg12345", true)]
     [InlineData("TG99", true)]

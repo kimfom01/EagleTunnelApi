@@ -35,9 +35,9 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 
 ## Track C — Migration (your own legacy account)
 
-1. [ ] Send `/start` → migration prompt asking for email (NOT instant menu).
-2. [ ] Enter your email → if your account ever had paid access, migration completes **with no referrer step**; panel email is now your address.
-3. [ ] Panel check: old `tg{id}` row either renamed in place or replaced (old row disabled).
+1. [ ] Never-paid legacy account: `/start` → migration prompt asking for email (+ referrer step) → trial account created.
+2. [ ] Already-paid legacy account: `/start` → straight to menu, no email prompt (login kept; changes via support/admin only).
+3. [ ] Paid legacy account opens `🎁 Invite Friends` → one-time email prompt → enter email → invite link appears; reopening the screen shows the link directly (update happens exactly once).
 
 ## Track D — Bonus payout (costs one real Tribute payment)
 
@@ -59,6 +59,34 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 2. [ ] D pays → A gets the bonus (proves late correction works pre-payment).
 3. [ ] After D's payment, D sends `/referrer` again → still editable only if never provisioned… D is now provisioned → bot refuses. (Use account E to test the refusal without paying: E must first get any paid access — or trust the unit test.)
 
+## Track G — Free trial (fresh account F)
+
+1. [ ] F registers via `/start` → account is **enabled** immediately with expiry ~2h out; comment has `Trial until …`; menu shows Active + trial note; F can connect.
+2. [ ] F pays within the trial → provisioner clears the `Trial until` tag, expiry becomes the paid date + any credit.
+3. [ ] Let a second trial lapse unpaid → status flips to Expired, no auto-disable needed (expiry enforces it).
+
+## Track H — Friend pre-registration + claim (A invites G)
+
+1. [ ] A opens invite screen → `➕ Register a Friend` → enters `g@example.com` → bot confirms invite created; panel shows `TgId=0` row with `Invited by <A-email>` + referrer tags + trial.
+2. [ ] G starts the bot, enters `g@example.com` → account auto-linked (panel `TgId` = G's id), referrer kept, straight to menu with no referrer re-prompt.
+3. [ ] G pays → A gets the bonus.
+4. [ ] A tries inviting an already-registered email → refused; invites own email → refused.
+5. [ ] Claim with a pre-existing legacy row: G started the bot before being invited (owns a dead `tg{id}` row) → after claiming, panel shows the linked account working and the old row retired as a disabled `tg{id}.merged-…` tombstone.
+
+## Track I — Admin register + change email (as admin)
+
+1. [ ] `/admin` → `➕ Register Account` → new email → referrer email (or `/skip`) → unclaimed `TgId=0` row created; friend claims it per Track H.
+2. [ ] `/admin` → `✏️ Change Email` → current email → new email → confirm → panel email renamed; user keeps service uninterrupted. Try a taken new email → refused.
+3. [ ] Provisioned legacy account: `/start` goes straight to menu (no migration prompt, no email change possible from the bot).
+
+## Track J — Partial admin search (as admin)
+
+1. [ ] With `johnappleseed@icloud.com` + `johnny@example.com` present: `/admin` → lookup → type `john` → pick list with both → tap second → correct card.
+2. [ ] Type a full exact email → resolves directly, no pick list.
+3. [ ] Type `zzz-no-match` → `No client found`.
+4. [ ] Repeat via `🚫 Ban` (or grant): partial → pick → confirm screen shows the picked email → execute works.
+5. [ ] Tap a stale pick button after starting another action → `selection expired` message.
+
 ---
 
 ## Gaming / vulnerability checks
@@ -77,6 +105,9 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 | 10 | Reminder spam | One DM per threshold per expiry cycle (markers in comment); only cancelled + migrated accounts | Inspect comment markers after Track E |
 | 11 | Double `/start` race | Second create collides → re-fetch → single account (existing idempotency) | Double-tap `/start` quickly, confirm one panel row |
 | 12 | Register with **someone else's email** | ⚠️ **Known gap — no email verification.** Possible: account mislabeled, true owner later blocked by "already registered". Impact is confusion-level (no money moves without Tribute payment), but flag any occurrence. Fix options if it matters: emailed code verification, or restrict to "one email per tgId, first come with support override". | Try registering account C with A's email → observe it succeeds; decide if you want verification added |
+| 13 | Farm free trials with new emails, same Telegram | Blocked — one account per Telegram ID; re-registration isn't offered to existing accounts | Try `/start` again on a trial account → straight to menu, no second trial |
+| 14 | Claim someone else's invite (know their email) | Claim links YOUR Telegram to THEIR email — self-harm only (you lose your own account linkage); no bonus without a real new payer | Unit-covered; live test optional |
+| 15 | Trial user never pays, refers friends | Fine — bonus fires only when the REFEREE pays; trial itself grants nothing to anyone | Unit-covered (trial referee still bonus-eligible on payment) |
 
 ## Sign-off checklist
 
@@ -84,5 +115,9 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 - [ ] D payout is exactly +30d, once, with DM
 - [ ] E tagging works (full DM wait optional)
 - [ ] F corrections + refusals behave
-- [ ] Gaming #1–4, #6, #9 verified live; #5, #8, #10–11 accepted via unit tests + code review
+- [ ] G trial connects immediately, survives payment, lapses cleanly
+- [ ] H invite → claim → payout chain works
+- [ ] I admin register/change-email + provisioned lockdown behave
+- [ ] J partial search + picks work across actions
+- [ ] Gaming #1–4, #6, #9, #13 verified live; #5, #8, #10–11, #14–15 accepted via unit tests + code review
 - [ ] Decision recorded on #12 (email verification: yes / later / never)

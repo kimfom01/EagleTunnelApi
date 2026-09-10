@@ -12,6 +12,7 @@ public static class MenuService
     public const string RefConfirm = "ref:confirm";
     public const string RefEdit = "ref:edit";
     public const string RefSkip = "ref:skip";
+    public const string FriendRegister = "friend:register";
 
     public const string Admin = "admin";
     public const string AdminLookup = "admin:lookup";
@@ -23,6 +24,8 @@ public static class MenuService
     public const string AdminReset = "admin:reset";
     public const string AdminLink = "admin:link";
     public const string AdminNudge = "admin:nudge";
+    public const string AdminRegister = "admin:register";
+    public const string AdminChangeEmail = "admin:change-email";
     public const string AdminExit = "admin:exit";
     public const string AdminCancel = "admin:cancel";
 
@@ -36,6 +39,8 @@ public static class MenuService
     public const string AdminConfirmReset = "admin:confirm:reset";
     public const string AdminConfirmLink = "admin:confirm:link";
     public const string AdminConfirmNudge = "admin:confirm:nudge";
+    public const string AdminConfirmChangeEmail = "admin:confirm:change-email";
+    public const string AdminPick = "admin:pick";
 
     public static InlineKeyboardMarkup MainMenu(SubscriptionStatus? status, string? subscriptionUrl,
         string tributeSubscriptionUrl, bool isAdmin = false)
@@ -99,6 +104,8 @@ public static class MenuService
             [InlineKeyboardButton.WithCallbackData("📱 Device Limit", AdminLimit)],
             [InlineKeyboardButton.WithCallbackData("♻️ Reset Traffic", AdminReset)],
             [InlineKeyboardButton.WithCallbackData("🔗 Link Account", AdminLink)],
+            [InlineKeyboardButton.WithCallbackData("➕ Register Account", AdminRegister)],
+            [InlineKeyboardButton.WithCallbackData("✏️ Change Email", AdminChangeEmail)],
             [InlineKeyboardButton.WithCallbackData("📨 Send Reminder", AdminNudge)],
             [InlineKeyboardButton.WithCallbackData("❌ Exit Admin", AdminExit)]
         ]);
@@ -139,6 +146,7 @@ public static class MenuService
         return new InlineKeyboardMarkup(
         [
             [InlineKeyboardButton.WithCopyText("📋 Copy Invite Link", new CopyTextButton { Text = referralLink })],
+            [InlineKeyboardButton.WithCallbackData("➕ Register a Friend", FriendRegister)],
             [InlineKeyboardButton.WithUrl("📹 Cancel Guide? Message Support", supportUrl)],
             [InlineKeyboardButton.WithCallbackData("🔙 Back", Back)]
         ]);
