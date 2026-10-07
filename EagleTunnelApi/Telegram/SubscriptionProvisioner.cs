@@ -103,19 +103,56 @@ public class SubscriptionProvisioner(
         if (expiryTimeMs.HasValue)
         {
             var creditMs = (long)ReferralService.GetCreditDays(client.Comment) * 24 * 60 * 60 * 1000;
-            resolvedExpiry = expiryTimeMs.Value + creditMs;
+            resolvedExpiry = RebaseWhenExpired(client.ExpiryTime, expiryTimeMs.Value, creditMs);
         }
 
         var updateRequest = client.ToUpdateRequest() with
         {
             Enable = enable,
             ExpiryTime = resolvedExpiry ?? client.ExpiryTime,
-            Comment = expiryTimeMs.HasValue && ReferralService.HasTrialTag(client.Comment)
-                ? ReferralService.ClearTrialTag(client.Comment)
-                : client.Comment,
+            Comment = expiryTimeMs.HasValue ? ClearActivationComment(client.Comment) : client.Comment,
             InboundIds = _telegramOptions.DefaultInboundIds.ToList()
         };
 
         await panelClient.UpdateClientAsync(updateRequest, cancellationToken);
+    }
+
+    /// <summary>
+    /// Paid access resumed: drop win-back state (cancelled tag, reminder markers)
+    /// and any trial tag. Referral attribution and credit ledger are preserved.
+    /// Returns the original reference when there is nothing to clear.
+    /// </summary>
+    private static string? ClearActivationComment(string? comment)
+    {
+        if (comment is null) return null;
+
+        var cleared = ReferralService.ClearRenewalMarkers(comment);
+
+        if (ReferralService.HasTrialTag(cleared))
+            cleared = ReferralService.ClearTrialTag(cleared);
+
+        return cleared;
+    }
+
+    /// <summary>
+    /// Computes the panel expiry for an activation. Tribute reports the new expiry
+    /// relative to the previous one, so when the account already expired the paid
+    /// days would otherwise be counted from the stale expiry (e.g. expired 7 days
+    /// ago + 30 paid days = only 23 days from today). In that case the paid span
+    /// is rebased onto now. Referral credit is always preserved on top.
+    /// </summary>
+    public static long RebaseWhenExpired(long currentExpiryMs, long tributeExpiryMs, long creditMs)
+    {
+        var candidate = tributeExpiryMs + creditMs;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        const long maxPaidSpanMs = 366L * 24 * 60 * 60 * 1000;
+
+        var paidMs = tributeExpiryMs - currentExpiryMs;
+
+        if (currentExpiryMs > 0 && currentExpiryMs <= nowMs && paidMs > 0 && paidMs <= maxPaidSpanMs)
+            return Math.Max(candidate, nowMs + paidMs + creditMs);
+
+        return candidate;
     }
 }

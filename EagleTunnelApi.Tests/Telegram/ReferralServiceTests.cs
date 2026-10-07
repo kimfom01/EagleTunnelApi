@@ -151,6 +151,33 @@ public class ReferralServiceTests
     }
 
     [Fact]
+    public void ClearRenewalMarkers_RemovesCancelledAndRemindersKeepsRest()
+    {
+        var comment =
+            "Telegram ID: 5 · Referred by: friend@example.com · Referral credit: 30d · " +
+            "Referral bonus paid · Cancelled 2026-09-01 · " +
+            "Reminder 3d sent for 2026-10-01 · Reminder 2d sent for 2026-10-01";
+
+        var cleared = ReferralService.ClearRenewalMarkers(comment);
+
+        Assert.DoesNotContain("Cancelled", cleared);
+        Assert.DoesNotContain("Reminder", cleared);
+        Assert.Contains("Telegram ID: 5", cleared);
+        Assert.Contains("Referred by: friend@example.com", cleared);
+        Assert.Contains("Referral credit: 30d", cleared);
+        Assert.Contains("Referral bonus paid", cleared);
+        Assert.DoesNotContain("· ·", cleared);
+    }
+
+    [Fact]
+    public void ClearRenewalMarkers_CleanComment_Unchanged()
+    {
+        Assert.Equal("base", ReferralService.ClearRenewalMarkers("base"));
+        Assert.Equal("", ReferralService.ClearRenewalMarkers(""));
+        Assert.Equal("", ReferralService.ClearRenewalMarkers(null));
+    }
+
+    [Fact]
     public void ClearReferralAttribution_RemovesTagsKeepsRest()
     {
         var comment = "John Doe · Telegram ID: 5 · Referrer tgId: 777 · Referred by: friend@example.com";

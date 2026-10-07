@@ -165,6 +165,21 @@ public static partial class ReferralService
         return CancelledRegex().Replace(comment, "").TrimEnd(' ', '·');
     }
 
+    /// <summary>
+    /// Removes win-back state (the <c>Cancelled</c> tag and all
+    /// <c>Reminder Nd sent</c> markers) when paid access resumes.
+    /// Referral attribution, credit ledger, and bonus markers are preserved.
+    /// </summary>
+    public static string ClearRenewalMarkers(string? comment)
+    {
+        if (string.IsNullOrEmpty(comment)) return "";
+
+        var updated = CancelledRegex().Replace(comment, " ");
+        updated = ReminderMarkerRegex().Replace(updated, " ");
+        updated = Regex.Replace(updated, @"\s*·\s*·\s*", " · ");
+        return updated.Trim().Trim('·').Trim();
+    }
+
     public static string BuildReminderMarker(int days, DateOnly expiryDate)
     {
         return $"Reminder {days}d sent for {expiryDate:yyyy-MM-dd}";
@@ -227,6 +242,9 @@ public static partial class ReferralService
 
     [GeneratedRegex(@"\s*·?\s*Cancelled \d{4}-\d{2}-\d{2}\s*·?\s*", RegexOptions.IgnoreCase)]
     private static partial Regex CancelledRegex();
+
+    [GeneratedRegex(@"\s*·?\s*Reminder \d+d sent for \d{4}-\d{2}-\d{2}\s*·?\s*", RegexOptions.IgnoreCase)]
+    private static partial Regex ReminderMarkerRegex();
 
     [GeneratedRegex(@"\s*·?\s*Trial until [^·]*", RegexOptions.IgnoreCase)]
     private static partial Regex TrialTagRegex();

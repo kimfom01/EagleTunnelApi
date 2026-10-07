@@ -1018,6 +1018,97 @@ public class TelegramHandlersTests
     }
 
     [Fact]
+    public async Task ReferralGate_InvalidEmail_RequiresEmailUpdateThenLink()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var invalid = ActiveClient() with
+        {
+            Email = "not-an-email",
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds(),
+            Comment = "Telegram ID: 12345"
+        };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return Json(ClientListJson(invalid));
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/update/not-an-email")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.Referral), CancellationToken.None);
+
+        var prompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("one-time", prompt.Body);
+        Assert.DoesNotContain("t.me/TestBot", prompt.Body);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.StartsWith(
+                "/admin/panel/api/clients/update/", StringComparison.Ordinal));
+        var body = await ReadJson(updateRequest);
+
+        Assert.Equal("newbie@example.com", body.GetProperty("email").GetString());
+        Assert.True(body.GetProperty("enable").GetBoolean());
+        Assert.DoesNotContain("Trial until", body.GetProperty("comment").GetString());
+        Assert.DoesNotContain("Referred by", body.GetProperty("comment").GetString());
+
+        var link = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains($"t.me/TestBot?start=ref_{TelegramId}", link.Body);
+        Assert.Contains("Invite Friends", link.Body);
+    }
+
+    [Fact]
+    public async Task FriendInvite_InvalidInviterEmail_RequiresEmailUpdate()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var inviter = ActiveClient() with { Email = "bademail" };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return Json(ClientListJson(inviter));
+
+            if (path == "/admin/panel/api/clients/get/pal@example.com")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/update/bademail")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.FriendRegister), CancellationToken.None);
+
+        var prompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("one-time", prompt.Body);
+        Assert.DoesNotContain("as referrer", prompt.Body);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("pal@example.com"), CancellationToken.None);
+
+        Assert.DoesNotContain(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+
+        var link = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains($"t.me/TestBot?start=ref_{TelegramId}", link.Body);
+    }
+
+    [Fact]
     public async Task Claim_WithLegacyDuplicate_RetiresIt()
     {
         var requests = new List<HttpRequestMessage>();

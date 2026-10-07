@@ -26,7 +26,7 @@ public class TributeEventsHandlerTests
     private static readonly long ExpectedExpiryMs =
         new DateTimeOffset(ExpiresAt.AddHours(1)).ToUnixTimeMilliseconds();
 
-    private static NewSubscription NewSubscriptionEvent(long telegramUserId = TelegramId)
+    private static NewSubscription NewSubscriptionEvent(long telegramUserId = TelegramId, DateTime? expiresAt = null)
     {
         return new NewSubscription(
             "Standard",
@@ -41,11 +41,11 @@ public class TributeEventsHandlerTests
             telegramUserId,
             3,
             "channel",
-            ExpiresAt
+            expiresAt ?? ExpiresAt
         );
     }
 
-    private static RenewedSubscription RenewedSubscriptionEvent(long telegramUserId = TelegramId)
+    private static RenewedSubscription RenewedSubscriptionEvent(long telegramUserId = TelegramId, DateTime? expiresAt = null)
     {
         return new RenewedSubscription(
             "Standard",
@@ -61,7 +61,7 @@ public class TributeEventsHandlerTests
             "https://t.me/app",
             3,
             "channel",
-            ExpiresAt,
+            expiresAt ?? ExpiresAt,
             "renewed"
         );
     }
@@ -195,6 +195,45 @@ public class TributeEventsHandlerTests
     }
 
     [Fact]
+    public async Task HandleRenewedSubscription_ClearsCancelledAndReminderMarkersKeepsCredit()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var client = SampleClient() with
+        {
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeMilliseconds(),
+            Comment = "Telegram ID: 12345 · Referral credit: 30d · Cancelled 2026-09-01 · " +
+                      "Reminder 3d sent for 2026-10-01"
+        };
+
+        var (handler, _) = CreateHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(client));
+
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/update/{client.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleRenewedSubscription(RenewedSubscriptionEvent(), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests, r => r.Method == HttpMethod.Post);
+        var body = await ReadBodyJson(updateRequest);
+
+        // Credit re-applied on top of the Tribute expiry.
+        Assert.Equal(ExpectedExpiryMs + 30L * 24 * 60 * 60 * 1000,
+            body.GetProperty("expiryTime").GetInt64());
+
+        var comment = body.GetProperty("comment").GetString()!;
+        Assert.DoesNotContain("Cancelled", comment);
+        Assert.DoesNotContain("Reminder", comment);
+        Assert.Contains("Referral credit: 30d", comment);
+        Assert.Contains("Telegram ID: 12345", comment);
+    }
+
+    [Fact]
     public async Task HandleNewSubscription_ExistingClient_UpdatesExpiry()
     {
         var requests = new List<HttpRequestMessage>();
@@ -215,6 +254,75 @@ public class TributeEventsHandlerTests
 
         var updateRequest = Assert.Single(requests, r => r.Method == HttpMethod.Post);
         AssertUpdateBody(await ReadBodyJson(updateRequest), client.Email, ExpectedExpiryMs);
+    }
+
+    [Fact]
+    public async Task HandleRenewedSubscription_ExpiredClient_RebasesPaidDaysOntoNow()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var now = DateTimeOffset.UtcNow;
+        var oldExpiry = now.AddDays(-7);
+        var tributeExpiry = oldExpiry.AddDays(30);
+        var client = SampleClient() with { ExpiryTime = oldExpiry.ToUnixTimeMilliseconds() };
+
+        var (handler, _) = CreateHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(client));
+
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/update/{client.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleRenewedSubscription(
+            RenewedSubscriptionEvent(expiresAt: tributeExpiry.UtcDateTime), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests, r => r.Method == HttpMethod.Post);
+        var body = await ReadBodyJson(updateRequest);
+
+        // 30 paid days rebased onto now (+1h Tribute grace), not 23 days from the stale expiry.
+        var expected = now.AddDays(30).AddHours(1).ToUnixTimeMilliseconds();
+        Assert.InRange(body.GetProperty("expiryTime").GetInt64(),
+            expected - 5 * 60 * 1000, expected + 5 * 60 * 1000);
+    }
+
+    [Fact]
+    public async Task HandleNewSubscription_ExpiredClient_RebasesPaidDaysOntoNow()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var now = DateTimeOffset.UtcNow;
+        var oldExpiry = now.AddDays(-7);
+        var tributeExpiry = oldExpiry.AddDays(30);
+        var client = SampleClient() with { ExpiryTime = oldExpiry.ToUnixTimeMilliseconds() };
+
+        var (handler, _) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(client));
+
+            if (path == $"/admin/panel/api/clients/update/{client.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            if (path == $"/admin/panel/api/clients/get/user@example.com")
+                return StubHttpMessageHandler.Json(ClientByEmailJson(client));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests, referralBonusDays: 0);
+
+        await handler.HandleNewSubscription(
+            NewSubscriptionEvent(expiresAt: tributeExpiry.UtcDateTime), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.Contains("/clients/update/"));
+        var body = await ReadBodyJson(updateRequest);
+
+        var expected = now.AddDays(30).AddHours(1).ToUnixTimeMilliseconds();
+        Assert.InRange(body.GetProperty("expiryTime").GetInt64(),
+            expected - 5 * 60 * 1000, expected + 5 * 60 * 1000);
     }
 
     [Fact]

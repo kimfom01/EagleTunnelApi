@@ -813,10 +813,10 @@ public sealed class TelegramHandlers : IUpdateHandler
     {
         var userDetails = await GetUserDetails(telegramId, cancellationToken);
 
-        if (userDetails is not null && ReferralService.IsLegacyEmail(userDetails.Username))
+        if (userDetails is not null && !ReferralService.IsValidEmail(userDetails.Username))
         {
             _logger.LogInformation(
-                "Legacy account opened referrals, requiring one-time email update. TelegramId: {TelegramId}",
+                "Account without a valid email opened referrals, requiring one-time email update. TelegramId: {TelegramId}",
                 telegramId);
 
             await StartEmailRegistration(botClient, telegramId, null,
@@ -917,6 +917,23 @@ public sealed class TelegramHandlers : IUpdateHandler
             await botClient.SendMessage(telegramId,
                 "You don't have an account yet — please use /start to register first.",
                 cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (!ReferralService.IsValidEmail(own.Client.Email))
+        {
+            _logger.LogInformation(
+                "Account without a valid email started a friend invite, requiring one-time email update. TelegramId: {TelegramId}",
+                telegramId);
+
+            _sessionStore.Get(telegramId).FriendInviteActive = false;
+
+            await StartEmailRegistration(botClient, telegramId, null,
+                !ReferralService.HasEverBeenProvisioned(own.Client), true, cancellationToken,
+                "🎁 To share your invite link, set your login email address below.\n" +
+                "This is a one-time update — afterwards the link is yours to share.\n\n");
+
+            _sessionStore.Get(telegramId).ReturnToReferral = true;
             return;
         }
 
