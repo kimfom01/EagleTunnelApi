@@ -83,6 +83,8 @@ if (!builder.Environment.IsProduction()) builder.Services.AddHostedService<Teleg
 
 builder.Services.AddHostedService<ExpiryReminderService>();
 
+builder.Services.AddHostedService<ReferralSettlementService>();
+
 var app = builder.Build();
 
 app.MapDefaultEndpoints();

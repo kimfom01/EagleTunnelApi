@@ -753,9 +753,12 @@ public sealed class TelegramHandlers : IUpdateHandler
             case MenuService.Connect:
                 await botClient.EditMessageText(telegramId.Value, messageId,
                     "📲 *How to Connect*\n\n" +
-                    "1️⃣ Download and install INCY from the App Store or Play Store.\n\n" +
-                    "2️⃣ Import your subscription link.\n\n" +
-                    "3️⃣ Connect to a server location.\n\n" +
+                    "1️⃣ Install INCY from the App Store or Play Store.\n\n" +
+                    "2️⃣ Tap on Copy VPN Link.\n\n" +
+                    "3️⃣ Open INCY.\n\n" +
+                    "4️⃣ Tap on the Paste button.\n" +
+                    "If on iPhone also tap on Allow Paste.\n\n" +
+                    "5️⃣ Tap on the big button to connect.\n\n" +
                     "You're connected 🎉",
                     ParseMode.Markdown, MenuService.ConnectMenu(session.SubscriptionUrl ?? ""),
                     cancellationToken: cancellationToken);
@@ -1052,6 +1055,17 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (!string.IsNullOrWhiteSpace(from?.Username))
             comment = ReferralService.AppendTag(comment, $"@{from.Username}");
+
+        if (ReferralService.HasEverBeenProvisioned(invited))
+        {
+            // Already-paid accounts can never earn a referral bonus (new-subscribers
+            // only), so void any carried attribution instead of letting it linger
+            // as a payable tag for the settlement sweep.
+            comment = ReferralService.ClearReferralAttribution(comment);
+
+            _logger.LogInformation("Voided referral attribution on claim of provisioned account. Email: {Email}",
+                invited.Email);
+        }
 
         try
         {

@@ -1,7 +1,7 @@
 # Referral System — Phone Testing Plan
 
 How to verify the whole feature from Telegram on your phone, plus the gaming/vulnerability checks.
-Unit suite is green (133 tests); this plan covers what only a live run can prove.
+Unit suite is green (179 tests); this plan covers what only a live run can prove.
 
 ## 0. Prerequisites (do once)
 
@@ -38,6 +38,7 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 1. [ ] Never-paid legacy account: `/start` → migration prompt asking for email (+ referrer step) → trial account created.
 2. [ ] Already-paid legacy account: `/start` → straight to menu, no email prompt (login kept; changes via support/admin only).
 3. [ ] Paid legacy account opens `🎁 Invite Friends` → one-time email prompt → enter email → invite link appears; reopening the screen shows the link directly (update happens exactly once).
+4. [ ] Same gate for **invalid (non-legacy) emails**: any account whose login email is malformed opens `🎁 Invite Friends` (or `➕ Register a Friend`) → one-time email prompt first, no link until the email is fixed.
 
 ## Track D — Bonus payout (costs one real Tribute payment)
 
@@ -45,13 +46,16 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 2. [ ] B (referred, never paid) buys the smallest subscription via Tribute.
 3. [ ] Expect within a minute: A's expiry **+30 days exactly**; A's comment gains `Referral credit: 30d`; B's comment gains `Referral bonus paid`; A gets a DM (`+30 days`, cancel tip, support pointer).
 4. [ ] B renews next cycle → **no second bonus** (A's expiry advances only by the paid period; credit persists and is re-applied, visible in comment).
+5. [ ] **Expired renewal rebase:** let a subscription lapse (e.g. expired 7 days), then resubscribe for 30 days → new expiry is ~today + 30 days, **not** old expiry + 30 days (~today + 23). Verify via `/admin` lookup or panel UI.
+6. [ ] **Manual-payment payout (free, no Tribute cost):** referred trial account F (never paid) → as admin, `/admin` → `➕ Grant / Extend` → grant F 30 days → A (referrer) gets **+30 days**, `Referral credit: 30d`, A gets the bonus DM; F's comment gains `Referral bonus paid` and loses the trial tag. Repeat the grant → **no second payout**.
+7. [ ] **Dashboard-direct payout (slow):** extend a referred, never-paid account directly in the 3X-UI panel UI → after the next daily settlement run (`Telegram:ReminderHourUtc`), A gets the bonus as in step 6.
 
 ## Track E — Cancel + reminders
 
 1. [ ] A cancels Tribute → next `cancelled_subscription` tags A's comment with `Cancelled <date>` (check via `/admin` lookup — it now shows referral state, credit, and cancel flag).
 2. [ ] **Fast check (no waiting):** as admin, `/admin` → `📨 Send Reminder` → enter A's email → confirm → A gets the reminder DM immediately, and the comment gains a `Reminder Nd sent for <date>` marker.
 3. [ ] Reminder DMs arrive 3 / 2 / 1 / 0 days before A's expiry, each with the resubscribe link (the daily job; the nudge in step 2 proves the content + delivery path end to end).
-4. [ ] A resubscribes → `Cancelled` tag and reminder markers clear on next activation.
+4. [ ] A resubscribes → `Cancelled` tag and reminder markers clear on next activation (verify via `/admin` lookup: no `Cancelled`/`Reminder … sent` in comment, `Referral credit` still present); expiry follows the rebase rule in Track D step 5.
 
 ## Track F — `/referrer` corrections
 
@@ -87,6 +91,11 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 4. [ ] Repeat via `🚫 Ban` (or grant): partial → pick → confirm screen shows the picked email → execute works.
 5. [ ] Tap a stale pick button after starting another action → `selection expired` message.
 
+## Track K — How to Connect guide (active account)
+
+1. [ ] Active account taps `🚀 How to Connect` → guide shows the 5 steps: install INCY → Copy VPN Link → open INCY → Paste (Allow Paste on iPhone) → big button to connect.
+2. [ ] `📋 Copy VPN Link` button copies the subscription URL; Back returns to the main menu.
+
 ---
 
 ## Gaming / vulnerability checks
@@ -108,16 +117,19 @@ Unit suite is green (133 tests); this plan covers what only a live run can prove
 | 13 | Farm free trials with new emails, same Telegram | Blocked — one account per Telegram ID; re-registration isn't offered to existing accounts | Try `/start` again on a trial account → straight to menu, no second trial |
 | 14 | Claim someone else's invite (know their email) | Claim links YOUR Telegram to THEIR email — self-harm only (you lose your own account linkage); no bonus without a real new payer | Unit-covered; live test optional |
 | 15 | Trial user never pays, refers friends | Fine — bonus fires only when the REFEREE pays; trial itself grants nothing to anyone | Unit-covered (trial referee still bonus-eligible on payment) |
+| 16 | Bonus chains up the graph (A←B←C, C pays) | Only B is paid; A's tag on B never triggers from a bonus grant | Unit-covered (referrer payout uses the chain-free grant core) |
+| 17 | Already-paid account claims a friend invite carrying a referrer | Attribution voided on claim (new-subscribers-only); later sweep pays nothing | Unit-covered; check panel comment has no `Referred by` after claiming with a paid account |
 
 ## Sign-off checklist
 
-- [ ] A–C pass on phone, panel comments look right
-- [ ] D payout is exactly +30d, once, with DM
-- [ ] E tagging works (full DM wait optional)
+- [ ] A–C pass on phone, panel comments look right (incl. invalid-email invite gate)
+- [ ] D payout is exactly +30d, once, with DM; expired renewal rebases onto today; manual-grant and dashboard payouts work
+- [ ] E tagging works (full DM wait optional); resubscribe clears Cancelled/markers, keeps credit
 - [ ] F corrections + refusals behave
 - [ ] G trial connects immediately, survives payment, lapses cleanly
 - [ ] H invite → claim → payout chain works
 - [ ] I admin register/change-email + provisioned lockdown behave
 - [ ] J partial search + picks work across actions
-- [ ] Gaming #1–4, #6, #9, #13 verified live; #5, #8, #10–11, #14–15 accepted via unit tests + code review
+- [ ] K connect guide shows the 5 INCY steps
+- [ ] Gaming #1–4, #6, #9, #13 verified live; #5, #8, #10–11, #14–17 accepted via unit tests + code review
 - [ ] Decision recorded on #12 (email verification: yes / later / never)

@@ -16,7 +16,7 @@ Email-based referral system for the EagleTunnel Telegram bot + 3X-UI panel + Tri
 | 3 | Storage | **Panel `comment` only** — no new DB |
 | 4 | Existing `tg{telegramId}` accounts | **Keep + migrate on next `/start`** |
 | 5 | Bonus amount | **1 month = 30 days** (`ReferralBonusDays = 30`) |
-| 6 | Bonus timing | **First paid activation** (`new_subscription` only, never `renewed_subscription`, never registration) |
+| 6 | Bonus timing | **First paid activation, however it happens** (`new_subscription` webhook, manual `/admin` grant, or daily settlement sweep for 3X-UI dashboard extensions — never `renewed_subscription`, never registration) |
 | 7 | Bonus redemption | **Cancel-based**: referrer cancels Tribute so they aren't billed while covered (recommended, not enforced) |
 | 8 | Deep-link payload | **`ref_<telegramId>`** (numeric Telegram user id with `ref_` prefix; short, no encoding, no PII in link; bare numeric accepted as fallback) |
 | 9 | Menu label (UX pick) | Button `🎁 Invite Friends — Get 1 Month Free` → screen "Invite Friends, Get 1 Month Free" + how-it-works + tap-to-copy link + Back |
@@ -61,9 +61,13 @@ Email-based referral system for the EagleTunnel Telegram bot + 3X-UI panel + Tri
 - Legacy users see "Register your email first" CTA in Invite screen instead of a link.
 
 ## 5. Bonus: +30d at first paid activation, cancel to enjoy
-1. Referee's first `new_subscription` → fetch referee **before** the provisioner runs, parse `Referred by:` (re-resolve `(pending)` live — referrer may have migrated since).
+1. Referee's first paid activation → fetch referee **before** the provisioner/grant runs, parse `Referred by:` (re-resolve `(pending)` live — referrer may have migrated since).
 2. Guards (all required): referrer exists, not self, referee comment lacks `Referral bonus paid` (idempotent; retries/renewals never re-grant), **and referee `!HasEverBeenProvisioned`** (never-provisioned check — blocks gifted bonuses via cancel → resubscribe on accounts that somehow carry a tag).
-3. `GrantAsync(referrerEmail, 30)` + tag referrer comment `Referral credit: 30d` (sums across referrals — this ledger maps 1:1 into future credit balances) + referee ` · Referral bonus paid`.
+3. Entry points (all settle through `IAdminPanelService.TrySettleReferralBonusAsync`):
+   - Tribute `new_subscription` webhook (instant);
+   - manual `/admin` → Grant/Extend by support for direct payments (instant — the pre-grant snapshot is the first-activation proof);
+   - daily `ReferralSettlementService` sweep (backstop for extensions made directly in the 3X-UI dashboard, where no event fires — settles attributed accounts that converted to paid access without a payout).
+4. `GrantAsync(referrerEmail, 30)` + tag referrer comment `Referral credit: 30d` (sums across referrals — this ledger maps 1:1 into future credit balances) + referee ` · Referral bonus paid`. The referrer payout itself uses the grant core **without** settling, so bonuses never chain up the referral graph.
 4. `/referrer` edits (and the wizard referrer step) are gated on the same `!HasEverBeenProvisioned` check — once provisioned, the bot refuses ("referrals only count for new subscribers — contact support") and directs to support.
 3. `GrantAsync(referrerEmail, 30)` + tag referrer comment `Referral credit: 30d` (sums across referrals — this ledger maps 1:1 into future credit balances) + referee ` · Referral bonus paid`.
 4. DM referrer: "+30 days active until `<date>`. **Cancel your Tribute renewal** so you aren't billed while covered — message support for a step-by-step video guide — we'll remind you 3-2-1-0 days before it ends" + resubscribe link + support button. (The bot never sends the video itself; see §7.)
@@ -119,3 +123,4 @@ Email-based referral system for the EagleTunnel Telegram bot + 3X-UI panel + Tri
 - Follow-ups (built): `/admin` lookup shows referrer / credit / cancel state; `/admin` → `📨 Send Reminder` fires the reminder DM instantly for any linked account (same text + marker logic as the daily job).
 - Round 2 (built, 157 tests green): 2h free trial (`TrialDurationHours`, tag-gated so trial accounts stay bonus-eligible; cleared on first payment); friend pre-registration + email claim (`TgId=0` unclaimed rows); admin register + admin change-email; email lockdown (provisioned accounts keep login, bot never renames them); partial-email admin search with pick lists on every email-entry action. Test-only notes: bot request bodies escape `'` as `\u0027` (assert apostrophe-free), day-window tests must pin end-of-day.
 - Round 3 (built, 161 tests green): claim auto-links admin-added emails on first bot visit (once — `TgId` set); claiming retires the requester's own legacy duplicate as a disabled `.merged-…` tombstone so two rows never shadow one Telegram ID; legacy paying customers get their one-time email update exactly where they need it (referral-link screen returns to the link afterwards); provisioned renames preserve enable/expiry (no trial overwrite).
+- Round 4 (manual-activation payout): referral settlement moved into `AdminPanelService` (`TrySettleReferralBonusAsync` + `GrantCoreAsync` without chaining); manual `/admin` grants settle instantly from the pre-grant snapshot; new daily `ReferralSettlementService` sweep (at `ReminderHourUtc`) settles attributed accounts that converted to paid access via direct 3X-UI dashboard edits; claiming an invite on an already-provisioned account voids its referral attribution (new-subscribers-only, same as the gift-block); manual grants also clear leftover trial tags.

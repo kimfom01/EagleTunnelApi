@@ -139,11 +139,12 @@ public class TributeEventsHandlerTests
             BaseAddress = new Uri(BaseUri)
         }, NullLogger<PanelApiClient>.Instance);
 
-        var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient);
+        var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient,
+            bot, options);
 
         return (new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance,
             new SubscriptionProvisioner(NullLogger<SubscriptionProvisioner>.Instance, panelClient, options),
-            panelClient, adminPanelService, bot, options), bot);
+            panelClient, adminPanelService), bot);
     }
 
     private static async Task<JsonElement> ReadBodyJson(HttpRequestMessage request)

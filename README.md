@@ -195,10 +195,13 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
   friend starts the bot and enters that email.
 - **Free trial:** New (never-provisioned) accounts are enabled for `Telegram:TrialDurationHours` (default `2`) so users
   can connect immediately; the first payment ends the trial (tag cleared) without touching referral attribution.
-- **Bonus:** When a referred friend pays for the first time (`new_subscription`), the referrer gets
-  `Telegram:ReferralBonusDays` (default `30`) added to their VPN expiry. The bonus is recorded as `Referral credit:` in
-  the referrer's panel comment and re-applied on every renewal so rebills never absorb it. Referrers are advised to
-  cancel their Tribute renewal to enjoy the free month; support provides a step-by-step cancellation video on request.
+- **Bonus:** When a referred friend pays for the first time, the referrer gets
+  `Telegram:ReferralBonusDays` (default `30`) added to their VPN expiry. The payout fires on the first paid
+  activation however it happens — Tribute `new_subscription` webhook, manual `/admin` grant (e.g. direct payment
+  to support), or the daily settlement sweep for extensions made directly in the 3X-UI dashboard. The bonus is
+  recorded as `Referral credit:` in the referrer's panel comment and re-applied on every renewal so rebills never
+  absorb it. Referrers are advised to cancel their Tribute renewal to enjoy the free month; support provides a
+  step-by-step cancellation video on request.
 - **Eligibility:** Referrals only count for genuinely new subscribers. A referrer can only be attached to accounts that
   never had paid access, each referral pays out exactly once, and self-referrals are blocked.
 - **Email lockdown:** Once an account is active, its login email can only be changed by support/admins (`/admin` →
@@ -215,7 +218,8 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 
 Unit tests live in the `EagleTunnelApi.Tests` project (xUnit). They cover webhook signature verification, subscription
 event handling (fetch / update / auto-create / idempotent fallback / error surfacing), referral bonus payout
-(first-payment grant, idempotency, gift/self-referral blocks, pending referrals, trial referees, trial-tag stripping),
+(first-payment grant, manual-grant grant, settlement sweep, idempotency, no-chaining, gift/self-referral blocks,
+pending referrals, trial referees, trial-tag stripping),
 trial registration, friend pre-registration and claim, admin register/change-email, partial-email pick lists, nudge flow,
 cancellation tagging, expiry reminders, subscription status derivation, and the Telegram bot flows including the
 registration wizard and admin commands.

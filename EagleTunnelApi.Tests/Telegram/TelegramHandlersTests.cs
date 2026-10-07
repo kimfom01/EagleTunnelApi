@@ -110,7 +110,8 @@ public class TelegramHandlersTests
             new HttpClient(new StubHttpMessageHandler(panelResponder)) { BaseAddress = new Uri(PanelBaseUri) },
             NullLogger<PanelApiClient>.Instance);
 
-        var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient);
+        var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient,
+            bot, telegramOptions);
 
         var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService,
             telegramOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
@@ -276,7 +277,63 @@ public class TelegramHandlersTests
 
         var menu = bot.Requests.Last(r => r.MethodName == "sendMessage");
         Assert.Contains("Welcome to Eagle Tunnel Network", menu.Body);
-        Assert.Contains("free trial", menu.Body);
+    }
+
+    [Fact]
+    public async Task Claim_ProvisionedInvitedAccount_VoidsReferralAttribution()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var getCount = 0;
+        var invited = ActiveClient() with
+        {
+            Email = "newbie@example.com",
+            TgId = 0,
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds(),
+            Comment = "Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com"
+        };
+        var claimed = invited with { TgId = TelegramId };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+            {
+                getCount++;
+                return Json(getCount == 1 ? EmptyListJson() : ClientListJson(claimed));
+            }
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(ClientByEmailJson(invited));
+
+            if (path == "/admin/panel/api/clients/get/tg12345")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/update/newbie@example.com")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var linkRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post &&
+                r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/update/newbie@example.com");
+        var body = await ReadJson(linkRequest);
+
+        Assert.Equal(TelegramId, body.GetProperty("tgId").GetInt64());
+
+        var comment = body.GetProperty("comment").GetString()!;
+        Assert.Contains("Telegram ID", comment);
+        Assert.DoesNotContain("Referred by", comment);
+        Assert.DoesNotContain("Referrer tgId", comment);
+
+        var menu = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("Welcome to Eagle Tunnel Network", menu.Body);
     }
 
     [Fact]
@@ -1522,6 +1579,9 @@ public class TelegramHandlersTests
         Assert.Contains("How to Connect", edit.Body);
         Assert.Contains("INCY", edit.Body);
         Assert.Contains("Copy VPN Link", edit.Body);
+        Assert.Contains("Paste", edit.Body);
+        Assert.Contains("Allow Paste", edit.Body);
+        Assert.Contains("big button", edit.Body);
 
         Assert.Contains(bot.Requests, r => r.MethodName == "answerCallbackQuery");
     }
