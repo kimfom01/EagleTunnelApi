@@ -95,6 +95,11 @@ public class SubscriptionProvisioner(
         return response?.Client;
     }
 
+    /// <summary>
+    /// Computes the panel expiry for an activation: Tribute's expiry plus any
+    /// referral credit. No rebasing — the panel expiry tracks Tribute's date
+    /// (which already includes the grace) with credit preserved on top.
+    /// </summary>
     private async Task UpdateClientAsync(PanelClient client, bool enable, long? expiryTimeMs,
         CancellationToken cancellationToken)
     {
@@ -133,10 +138,4 @@ public class SubscriptionProvisioner(
 
         return cleared;
     }
-
-    /// <summary>
-    /// Computes the panel expiry for an activation: Tribute's expiry plus any
-    /// referral credit. No rebasing — the panel expiry tracks Tribute's date
-    /// (which already includes the grace) with credit preserved on top.
-    /// </summary>
 }

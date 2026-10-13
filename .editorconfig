@@ -1,6 +1,6 @@
 root = true
 
-# Unused-code rules surface as build warnings (see Directory.Build.props).
+# Unused-code rules (enforced in CI via `dotnet format --verify-no-changes`).
 [*.cs]
 dotnet_diagnostic.IDE0005.severity = warning
 dotnet_diagnostic.IDE0051.severity = warning

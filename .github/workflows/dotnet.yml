@@ -24,5 +24,7 @@ jobs:
       run: dotnet restore
     - name: Build
       run: dotnet build --no-restore
+    - name: Verify formatting and code style
+      run: dotnet format --verify-no-changes --no-restore
     - name: Test
       run: dotnet test --no-build --verbosity normal

@@ -1,5 +1,4 @@
 using EagleTunnelApi.Configuration;
-using EagleTunnelApi.Telegram;
 using Microsoft.Extensions.Options;
 
 namespace EagleTunnelApi.Telegram;

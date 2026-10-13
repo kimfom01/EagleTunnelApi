@@ -6,7 +6,11 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <UserSecretsId>70689f9f-b820-4b96-954f-25b3d6ae85ef</UserSecretsId>
-        <!-- No Aspire CLI-bundle features in use; keep plain 'dotnet run' orchestration. -->
+        <!-- Plain 'dotnet run' orchestration: dependencies come from NuGet, not the
+             Aspire CLI bundle. Per https://aka.ms/aspire/diagnostics/aspire010 the
+             correction for staying on NuGet orchestration is to opt out explicitly
+             and suppress ASPIRE010, which is what both lines below do. -->
+        <AspireUseCliBundle>false</AspireUseCliBundle>
         <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
     </PropertyGroup>
 
