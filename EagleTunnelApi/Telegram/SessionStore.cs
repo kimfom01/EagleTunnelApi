@@ -55,6 +55,8 @@ public sealed class UserSession
 
     public bool CollectReferrer { get; set; }
 
+    public bool ReferrerRequired { get; set; }
+
     public bool FriendInviteActive { get; set; }
 
     public bool ReturnToReferral { get; set; }

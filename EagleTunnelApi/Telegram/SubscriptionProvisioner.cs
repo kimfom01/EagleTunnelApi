@@ -103,7 +103,7 @@ public class SubscriptionProvisioner(
         if (expiryTimeMs.HasValue)
         {
             var creditMs = (long)ReferralService.GetCreditDays(client.Comment) * 24 * 60 * 60 * 1000;
-            resolvedExpiry = RebaseWhenExpired(client.ExpiryTime, expiryTimeMs.Value, creditMs);
+            resolvedExpiry = expiryTimeMs.Value + creditMs;
         }
 
         var updateRequest = client.ToUpdateRequest() with
@@ -135,24 +135,8 @@ public class SubscriptionProvisioner(
     }
 
     /// <summary>
-    /// Computes the panel expiry for an activation. Tribute reports the new expiry
-    /// relative to the previous one, so when the account already expired the paid
-    /// days would otherwise be counted from the stale expiry (e.g. expired 7 days
-    /// ago + 30 paid days = only 23 days from today). In that case the paid span
-    /// is rebased onto now. Referral credit is always preserved on top.
+    /// Computes the panel expiry for an activation: Tribute's expiry plus any
+    /// referral credit. No rebasing — the panel expiry tracks Tribute's date
+    /// (which already includes the grace) with credit preserved on top.
     /// </summary>
-    public static long RebaseWhenExpired(long currentExpiryMs, long tributeExpiryMs, long creditMs)
-    {
-        var candidate = tributeExpiryMs + creditMs;
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        const long maxPaidSpanMs = 366L * 24 * 60 * 60 * 1000;
-
-        var paidMs = tributeExpiryMs - currentExpiryMs;
-
-        if (currentExpiryMs > 0 && currentExpiryMs <= nowMs && paidMs > 0 && paidMs <= maxPaidSpanMs)
-            return Math.Max(candidate, nowMs + paidMs + creditMs);
-
-        return candidate;
-    }
 }

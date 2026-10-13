@@ -258,7 +258,7 @@ public class TributeEventsHandlerTests
     }
 
     [Fact]
-    public async Task HandleRenewedSubscription_ExpiredClient_RebasesPaidDaysOntoNow()
+    public async Task HandleRenewedSubscription_ExpiredClient_AppliesTributeExpiryDirectly()
     {
         var requests = new List<HttpRequestMessage>();
         var now = DateTimeOffset.UtcNow;
@@ -283,14 +283,14 @@ public class TributeEventsHandlerTests
         var updateRequest = Assert.Single(requests, r => r.Method == HttpMethod.Post);
         var body = await ReadBodyJson(updateRequest);
 
-        // 30 paid days rebased onto now (+1h Tribute grace), not 23 days from the stale expiry.
-        var expected = now.AddDays(30).AddHours(1).ToUnixTimeMilliseconds();
+        // No rebasing: panel expiry tracks Tribute's date (+1h grace), even when stale.
+        var expected = tributeExpiry.AddHours(1).ToUnixTimeMilliseconds();
         Assert.InRange(body.GetProperty("expiryTime").GetInt64(),
             expected - 5 * 60 * 1000, expected + 5 * 60 * 1000);
     }
 
     [Fact]
-    public async Task HandleNewSubscription_ExpiredClient_RebasesPaidDaysOntoNow()
+    public async Task HandleNewSubscription_ExpiredClient_AppliesTributeExpiryDirectly()
     {
         var requests = new List<HttpRequestMessage>();
         var now = DateTimeOffset.UtcNow;
@@ -321,7 +321,7 @@ public class TributeEventsHandlerTests
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.Contains("/clients/update/"));
         var body = await ReadBodyJson(updateRequest);
 
-        var expected = now.AddDays(30).AddHours(1).ToUnixTimeMilliseconds();
+        var expected = tributeExpiry.AddHours(1).ToUnixTimeMilliseconds();
         Assert.InRange(body.GetProperty("expiryTime").GetInt64(),
             expected - 5 * 60 * 1000, expected + 5 * 60 * 1000);
     }

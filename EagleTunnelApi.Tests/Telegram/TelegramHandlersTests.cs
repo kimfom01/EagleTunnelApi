@@ -251,6 +251,7 @@ public class TelegramHandlersTests
         var confirm = bot.Requests.Last(r => r.MethodName == "sendMessage");
         Assert.Contains("friend@example.com", confirm.Body);
         Assert.Contains("\"ref:confirm\"", confirm.Body);
+        Assert.DoesNotContain("\"ref:skip\"", confirm.Body);
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.RefConfirm), CancellationToken.None);
 
@@ -275,8 +276,76 @@ public class TelegramHandlersTests
         Assert.DoesNotContain(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/bulkDisable");
 
-        var menu = bot.Requests.Last(r => r.MethodName == "sendMessage");
-        Assert.Contains("Welcome to Eagle Tunnel Network", menu.Body);
+        var deepLinkMenu = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("Welcome to Eagle Tunnel Network", deepLinkMenu.Body);
+    }
+
+    [Fact]
+    public async Task Wizard_WithDeepLink_SkipText_Rejected_ReferrerKept()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referrer = ReferrerAccount();
+        var (handler, bot) = CreateWizardHandler(requests, referrer);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start ref_777"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+
+        var rejection = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("referrer is required", rejection.Body);
+        Assert.DoesNotContain(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+
+        // Confirming afterwards still completes with attribution.
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.RefConfirm), CancellationToken.None);
+
+        var addRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        var comment = (await ReadJson(addRequest)).GetProperty("client").GetProperty("comment").GetString()!;
+        Assert.Contains("Referred by: friend@example.com", comment);
+    }
+
+    [Fact]
+    public async Task Wizard_WithDeepLink_SkipCallback_Rejected_ReferrerKept()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var referrer = ReferrerAccount();
+        var (handler, bot) = CreateWizardHandler(requests, referrer);
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start ref_777"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.RefSkip), CancellationToken.None);
+
+        var rejection = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("referrer is required", rejection.Body);
+        Assert.DoesNotContain(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+    }
+
+    [Fact]
+    public async Task Wizard_WithDeepLink_Edit_RequiresReferrer_NoSkipOffered()
+    {
+        var editRequests = new List<HttpRequestMessage>();
+        var editReferrer = ReferrerAccount();
+        var (editHandler, editBot) = CreateWizardHandler(editRequests, editReferrer);
+
+        await editHandler.HandleUpdateAsync(editBot, TextUpdate("/start ref_777"), CancellationToken.None);
+        await editHandler.HandleUpdateAsync(editBot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await editHandler.HandleUpdateAsync(editBot, CallbackUpdate(MenuService.RefEdit), CancellationToken.None);
+
+        var editPrompt = editBot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("required", editPrompt.Body);
+        Assert.DoesNotContain("\"ref:skip\"", editPrompt.Body);
+
+        // Skipping after edit is still rejected.
+        await editHandler.HandleUpdateAsync(editBot, TextUpdate("/skip"), CancellationToken.None);
+
+        var editRejection = editBot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("referrer is required", editRejection.Body);
+        Assert.DoesNotContain(editRequests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
     }
 
     [Fact]
@@ -689,7 +758,9 @@ public class TelegramHandlersTests
             if (path == "/admin/panel/api/clients/get/pal@example.com")
                 return Json(FailureJson("not found"));
 
-            if (path == "/admin/panel/api/clients/add") return Json(SuccessJson());
+            if (path == "/admin/panel/api/clients/add" ||
+                path == "/admin/panel/api/clients/bulkDisable")
+                return Json(SuccessJson());
 
             throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
         });
@@ -708,12 +779,15 @@ public class TelegramHandlersTests
 
         Assert.Equal("pal@example.com", client.GetProperty("email").GetString());
         Assert.Equal(0, client.GetProperty("tgId").GetInt64());
-        Assert.True(client.GetProperty("enable").GetBoolean());
+        Assert.False(client.GetProperty("enable").GetBoolean());
 
         var comment = client.GetProperty("comment").GetString()!;
         Assert.Contains($"Referrer tgId: {TelegramId}", comment);
         Assert.Contains("Referred by: user@example.com", comment);
-        Assert.Contains("Trial until", comment);
+        Assert.DoesNotContain("Trial until", comment);
+
+        Assert.Contains(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/bulkDisable");
 
         var done = bot.Requests.Last(r => r.MethodName == "sendMessage");
         Assert.Contains("Invite created", done.Body);
@@ -754,9 +828,9 @@ public class TelegramHandlersTests
         {
             Email = "newbie@example.com",
             TgId = 0,
-            Enable = true,
-            ExpiryTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
-            Comment = $"Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com · Trial until 2099-01-01 00:00 UTC"
+            Enable = false,
+            ExpiryTime = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds(),
+            Comment = "Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com"
         };
         var claimed = invited with { TgId = TelegramId };
 
@@ -786,7 +860,68 @@ public class TelegramHandlersTests
         var linkRequest = Assert.Single(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.StartsWith(
                 "/admin/panel/api/clients/update/", StringComparison.Ordinal));
-        Assert.Equal(TelegramId, (await ReadJson(linkRequest)).GetProperty("tgId").GetInt64());
+        var linkBody = await ReadJson(linkRequest);
+
+        // Claiming starts the deferred trial and links Telegram.
+        Assert.Equal(TelegramId, linkBody.GetProperty("tgId").GetInt64());
+        Assert.True(linkBody.GetProperty("enable").GetBoolean());
+        Assert.Contains("Trial until", linkBody.GetProperty("comment").GetString());
+        Assert.Contains("Referred by: friend@example.com", linkBody.GetProperty("comment").GetString());
+        Assert.InRange(linkBody.GetProperty("expiryTime").GetInt64(),
+            DateTimeOffset.UtcNow.AddHours(2).AddMinutes(-2).ToUnixTimeMilliseconds(),
+            DateTimeOffset.UtcNow.AddHours(2).AddMinutes(2).ToUnixTimeMilliseconds());
+
+        var menu = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("Welcome to Eagle Tunnel Network", menu.Body);
+    }
+
+    [Fact]
+    public async Task ClaimLinksUnclaimedAccountWithTrial_KeepsExistingState()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var getCount = 0;
+        var invited = ActiveClient() with
+        {
+            Email = "newbie@example.com",
+            TgId = 0,
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+            Comment = "Registered by admin · Referred by: friend@example.com · Trial until 2099-01-01 00:00 UTC"
+        };
+        var claimed = invited with { TgId = TelegramId };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+            {
+                getCount++;
+                return Json(getCount == 1 ? EmptyListJson() : ClientListJson(claimed));
+            }
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(ClientByEmailJson(invited));
+
+            if (path == "/admin/panel/api/clients/update/newbie@example.com")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var linkRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.StartsWith(
+                "/admin/panel/api/clients/update/", StringComparison.Ordinal));
+        var linkBody = await ReadJson(linkRequest);
+
+        // Admin-registered rows already carry a trial: claim only links Telegram.
+        Assert.Equal(TelegramId, linkBody.GetProperty("tgId").GetInt64());
+        Assert.True(linkBody.GetProperty("enable").GetBoolean());
+        Assert.Contains("Trial until 2099-01-01", linkBody.GetProperty("comment").GetString());
 
         var menu = bot.Requests.Last(r => r.MethodName == "sendMessage");
         Assert.Contains("Welcome to Eagle Tunnel Network", menu.Body);

@@ -185,14 +185,16 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 
 ## Referral System
 
-- **Registration:** `/start` asks new users for their email address, then for their referrer's email (skippable). Deep
-  links (`t.me/<bot>?start=ref_<telegramId>`) pre-fill the referrer and show a Confirm / Edit / Skip screen. Mistyped
-  referrers can be fixed with `/referrer` until the first payment.
+- **Registration:** `/start` asks new users for their email address, then for their referrer's email (skippable
+  for organic signups). Deep links (`t.me/<bot>?start=ref_<telegramId>`) pre-fill the referrer and show a Confirm /
+  Edit screen — attribution from a link is required and can't be skipped. Mistyped referrers can be fixed with
+  `/referrer` until the first payment.
 - **Invite links:** Every user gets a personal link behind the `🎁 Invite Friends — Get 1 Month Free` menu button.
   Legacy `tg{id}` accounts are asked for a one-time login-email update when they open that screen.
 - **Pre-registration:** Users can register a friend's email from the invite screen, and admins via `/admin` →
   `➕ Register Account`. The account waits unlinked (`TgId=0`) and is auto-linked — keeping its referrer — when the
-  friend starts the bot and enters that email.
+  friend starts the bot and enters that email. Friend invites wait disabled with no trial until claimed; the free
+  trial starts when the invitee links the account.
 - **Free trial:** New (never-provisioned) accounts are enabled for `Telegram:TrialDurationHours` (default `2`) so users
   can connect immediately; the first payment ends the trial (tag cleared) without touching referral attribution.
 - **Bonus:** When a referred friend pays for the first time, the referrer gets

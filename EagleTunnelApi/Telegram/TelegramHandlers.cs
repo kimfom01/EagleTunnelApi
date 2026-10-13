@@ -181,6 +181,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.PendingEmail = null;
         session.PendingReferrerTgId = null;
         session.PendingReferrerEmail = null;
+        session.ReferrerRequired = false;
 
         if (collectReferrer && ReferralService.TryParseRefPayload(startPayload, out var referrerTgId))
         {
@@ -194,6 +195,7 @@ public sealed class TelegramHandlers : IUpdateHandler
                     {
                         session.PendingReferrerTgId = referrerTgId;
                         session.PendingReferrerEmail = referrer.Username;
+                        session.ReferrerRequired = true;
                     }
                 }
                 catch (PanelApiException ex)
@@ -287,6 +289,17 @@ public sealed class TelegramHandlers : IUpdateHandler
         {
             if (session.RegistrationStep == RegistrationStep.AwaitingReferrer)
             {
+                if (session.ReferrerRequired)
+                {
+                    await botClient.SendMessage(telegramId,
+                        $"🎁 This invite came from a referral link, so a referrer is required.\n\n" +
+                        $"You were referred by `{session.PendingReferrerEmail}`. Please confirm:",
+                        ParseMode.Markdown,
+                        replyMarkup: MenuService.RefConfirmMenu(),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
                 session.PendingReferrerTgId = null;
                 session.PendingReferrerEmail = null;
                 await CompleteRegistrationAsync(botClient, telegramId, from, cancellationToken);
@@ -404,6 +417,14 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (!ReferralService.IsValidEmail(email))
         {
+            if (session.ReferrerRequired)
+            {
+                await botClient.SendMessage(telegramId,
+                    "❌ That doesn't look like a valid email address. Please try again (a referrer is required):",
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
             await botClient.SendMessage(telegramId,
                 "❌ That doesn't look like a valid email address. Please try again, or tap Skip.",
                 replyMarkup: MenuService.ReferralInputMenu(),
@@ -413,6 +434,14 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (session.PendingEmail is not null && email == session.PendingEmail)
         {
+            if (session.ReferrerRequired)
+            {
+                await botClient.SendMessage(telegramId,
+                    "🙂 You can't refer yourself. Please enter someone else's email (a referrer is required):",
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
             await botClient.SendMessage(telegramId,
                 "🙂 You can't refer yourself. Please enter someone else's email, or tap Skip.",
                 replyMarkup: MenuService.ReferralInputMenu(),
@@ -434,6 +463,14 @@ public sealed class TelegramHandlers : IUpdateHandler
         {
             if (referrer.TgId == telegramId)
             {
+                if (session.ReferrerRequired)
+                {
+                    await botClient.SendMessage(telegramId,
+                        "🙂 You can't refer yourself. Please enter someone else's email (a referrer is required):",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
                 await botClient.SendMessage(telegramId,
                     "🙂 You can't refer yourself. Please enter someone else's email, or tap Skip.",
                     replyMarkup: MenuService.ReferralInputMenu(),
@@ -504,6 +541,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.PendingEmail = client.Email;
         session.PendingReferrerTgId = null;
         session.PendingReferrerEmail = null;
+        session.ReferrerRequired = false;
 
         await botClient.SendMessage(telegramId,
             "🎁 Reply with your referrer's **email address** — or tap Skip to remove it.",
@@ -574,6 +612,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.PendingEmail = null;
         session.PendingReferrerTgId = null;
         session.PendingReferrerEmail = null;
+        session.ReferrerRequired = false;
 
         if (session.ReturnToReferral)
         {
@@ -883,9 +922,8 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.PendingReferrerEmail = null;
 
         await botClient.SendMessage(telegramId,
-            "Please reply with your referrer's **email address**:",
+            "Please reply with your referrer's **email address** (required — this invite came from a referral link):",
             ParseMode.Markdown,
-            replyMarkup: MenuService.ReferralInputMenu(),
             cancellationToken: cancellationToken);
     }
 
@@ -895,6 +933,18 @@ public sealed class TelegramHandlers : IUpdateHandler
         var session = _sessionStore.Get(telegramId);
 
         if (session.RegistrationStep != RegistrationStep.AwaitingReferrer) return;
+
+        if (session.ReferrerRequired)
+        {
+            _logger.LogInformation("Rejected deep-link referrer skip. TelegramId: {TelegramId}", telegramId);
+            await botClient.SendMessage(telegramId,
+                $"🎁 This invite came from a referral link, so a referrer is required.\n\n" +
+                $"You were referred by `{session.PendingReferrerEmail}`. Please confirm:",
+                ParseMode.Markdown,
+                replyMarkup: MenuService.RefConfirmMenu(),
+                cancellationToken: cancellationToken);
+            return;
+        }
 
         session.PendingReferrerTgId = null;
         session.PendingReferrerEmail = null;
@@ -1014,19 +1064,19 @@ public sealed class TelegramHandlers : IUpdateHandler
         }
 
         var inviterEmail = own.Client.Email;
-        var (enable, expiryTimeMs, trialEnds) = NewAccountState();
+        // Friend invites start inactive with no trial: the trial begins only when
+        // the invitee starts the bot and links this email (see ClaimInvitedAccountAsync).
+        var expiryTimeMs = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds();
         var comment =
             $"Invited by {inviterEmail} · Referrer tgId: {telegramId} · Referred by: {inviterEmail}";
-
-        if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
 
         try
         {
             await _panelClient.AddClientAsync(new CreateClientPayload(
-                PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, 0, comment),
+                PanelClientDefaults.CreateClient(email, false, expiryTimeMs, 0, comment),
                 _telegramOptions.DefaultInboundIds.ToList()), cancellationToken);
 
-            if (!enable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
+            await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
         }
         catch (PanelApiException ex)
         {
@@ -1041,7 +1091,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         _logger.LogInformation("Friend invite created. Email: {Email}, Inviter: {Inviter}", email, inviterEmail);
 
         await botClient.SendMessage(telegramId,
-            $"✅ Invite created for `{email}` — they'll be linked as your referral " +
+            $"✅ Invite created for `{email}` — they'll get their free trial as your referral " +
             "when they start the bot and enter this email.",
             ParseMode.Markdown,
             cancellationToken: cancellationToken);
@@ -1067,18 +1117,54 @@ public sealed class TelegramHandlers : IUpdateHandler
                 invited.Email);
         }
 
-        try
+        // Friend invites are created inactive with no trial; the trial starts now,
+        // when the invitee links their Telegram by providing this email.
+        // Rows that already carry a trial (e.g. admin-registered) or paid access
+        // keep their existing state.
+        var startTrial = !ReferralService.HasEverBeenProvisioned(invited)
+            && !ReferralService.HasTrialTag(invited.Comment)
+            && !invited.Enable;
+
+        if (startTrial)
         {
-            await _panelClient.UpdateClientAsync(invited.Email,
-                invited.ToUpdateRequest() with { TgId = telegramId, Comment = comment }, cancellationToken);
+            var (trialEnable, trialExpiryMs, trialEnds) = NewAccountState();
+            if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
+
+            try
+            {
+                await _panelClient.UpdateClientAsync(invited.Email,
+                    invited.ToUpdateRequest() with
+                    {
+                        TgId = telegramId,
+                        Comment = comment,
+                        Enable = trialEnable,
+                        ExpiryTime = trialExpiryMs
+                    }, cancellationToken);
+            }
+            catch (PanelApiException ex)
+            {
+                _logger.LogError(ex, "Invite claim failed. Email: {Email}", invited.Email);
+                await botClient.SendMessage(telegramId,
+                    "❌ Something went wrong linking your account. Please try /start again.",
+                    cancellationToken: cancellationToken);
+                return;
+            }
         }
-        catch (PanelApiException ex)
+        else
         {
-            _logger.LogError(ex, "Invite claim failed. Email: {Email}", invited.Email);
-            await botClient.SendMessage(telegramId,
-                "❌ Something went wrong linking your account. Please try /start again.",
-                cancellationToken: cancellationToken);
-            return;
+            try
+            {
+                await _panelClient.UpdateClientAsync(invited.Email,
+                    invited.ToUpdateRequest() with { TgId = telegramId, Comment = comment }, cancellationToken);
+            }
+            catch (PanelApiException ex)
+            {
+                _logger.LogError(ex, "Invite claim failed. Email: {Email}", invited.Email);
+                await botClient.SendMessage(telegramId,
+                    "❌ Something went wrong linking your account. Please try /start again.",
+                    cancellationToken: cancellationToken);
+                return;
+            }
         }
 
         _logger.LogInformation("Invite claimed. Email: {Email}, TelegramId: {TelegramId}",

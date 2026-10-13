@@ -159,8 +159,7 @@ public static class MenuService
             [
                 InlineKeyboardButton.WithCallbackData("✅ Confirm", RefConfirm),
                 InlineKeyboardButton.WithCallbackData("✏️ Edit", RefEdit)
-            ],
-            [InlineKeyboardButton.WithCallbackData("⏭️ Skip", RefSkip)]
+            ]
         ]);
     }
 
