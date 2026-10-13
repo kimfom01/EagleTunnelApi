@@ -29,5 +29,8 @@ public sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponse
         };
     }
 
-    public static HttpResponseMessage Json(string rawJson) => Json(HttpStatusCode.OK, rawJson);
+    public static HttpResponseMessage Json(string rawJson)
+    {
+        return Json(HttpStatusCode.OK, rawJson);
+    }
 }

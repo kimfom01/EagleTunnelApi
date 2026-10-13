@@ -4,21 +4,29 @@ namespace EagleTunnelApi.PanelApi.Models;
 
 public record CreateClientPayload(
     [property: JsonPropertyName("client")] CreateClientRequest Client,
-    [property: JsonPropertyName("inboundIds")] List<int> InboundIds
+    [property: JsonPropertyName("inboundIds")]
+    List<int> InboundIds
 );
 
 public record CreateClientRequest(
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("enable")] bool Enable,
-    [property: JsonPropertyName("expiryTime")] long ExpiryTime,
-    [property: JsonPropertyName("totalGB")] long TotalGB,
+    [property: JsonPropertyName("expiryTime")]
+    long ExpiryTime,
+    [property: JsonPropertyName("totalGB")]
+    long TotalGB,
     [property: JsonPropertyName("tgId")] long TgId,
-    [property: JsonPropertyName("comment")] string? Comment,
-    [property: JsonPropertyName("limitHwid")] int LimitHwid,
-    [property: JsonPropertyName("trafficReset")] string TrafficReset,
-    [property: JsonPropertyName("trafficResetDay")] int TrafficResetDay,
+    [property: JsonPropertyName("comment")]
+    string? Comment,
+    [property: JsonPropertyName("limitHwid")]
+    int LimitHwid,
+    [property: JsonPropertyName("trafficReset")]
+    string TrafficReset,
+    [property: JsonPropertyName("trafficResetDay")]
+    int TrafficResetDay,
     [property: JsonPropertyName("subId")] string SubId,
-    [property: JsonPropertyName("password")] string Password,
+    [property: JsonPropertyName("password")]
+    string Password,
     [property: JsonPropertyName("auth")] string Auth,
     [property: JsonPropertyName("flow")] string Flow
 );

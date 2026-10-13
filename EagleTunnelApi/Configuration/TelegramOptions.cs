@@ -19,4 +19,12 @@ public sealed class TelegramOptions
     public string WebhookPath { get; set; } = "/webhooks/telegram";
 
     public string WebhookSecretToken { get; set; } = string.Empty;
+
+    public string BotUsername { get; set; } = string.Empty;
+
+    public int ReferralBonusDays { get; set; } = 30;
+
+    public int ReminderHourUtc { get; set; } = 9;
+
+    public int TrialDurationHours { get; set; } = 2;
 }

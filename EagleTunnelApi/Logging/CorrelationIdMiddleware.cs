@@ -8,10 +8,7 @@ public sealed class CorrelationIdMiddleware(RequestDelegate next)
     {
         var correlationId = context.Request.Headers[HeaderName].ToString();
 
-        if (string.IsNullOrEmpty(correlationId))
-        {
-            correlationId = Guid.NewGuid().ToString("N");
-        }
+        if (string.IsNullOrEmpty(correlationId)) correlationId = Guid.NewGuid().ToString("N");
 
         context.Response.Headers[HeaderName] = correlationId;
 

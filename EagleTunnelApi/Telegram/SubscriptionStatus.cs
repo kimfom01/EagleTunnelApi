@@ -14,40 +14,38 @@ public static class SubscriptionFormatter
 {
     public static SubscriptionStatus DeriveStatus(PanelClient client, long usedTraffic)
     {
-        if (!client.Enable)
-        {
-            return SubscriptionStatus.Disabled;
-        }
+        if (!client.Enable) return SubscriptionStatus.Disabled;
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        if (client.ExpiryTime > 0 && client.ExpiryTime < now)
-        {
-            return SubscriptionStatus.Expired;
-        }
+        if (client.ExpiryTime > 0 && client.ExpiryTime < now) return SubscriptionStatus.Expired;
 
-        if (client.TotalGB > 0 && usedTraffic >= client.TotalGB)
-        {
-            return SubscriptionStatus.Limited;
-        }
+        if (client.TotalGB > 0 && usedTraffic >= client.TotalGB) return SubscriptionStatus.Limited;
 
         return SubscriptionStatus.Active;
     }
 
-    public static string GetStatusText(SubscriptionStatus status) => status switch
+    public static string GetStatusText(SubscriptionStatus status)
     {
-        SubscriptionStatus.Active => "🔥 Subscription: Active",
-        SubscriptionStatus.Disabled => "📦 Subscription: Not Active",
-        SubscriptionStatus.Limited => "🦥 Subscription: Limited",
-        SubscriptionStatus.Expired => "🧟 Subscription: Expired",
-        _ => "❓ Subscription: Unknown"
-    };
+        return status switch
+        {
+            SubscriptionStatus.Active => "🔥 Subscription: Active",
+            SubscriptionStatus.Disabled => "📦 Subscription: Not Active",
+            SubscriptionStatus.Limited => "🦥 Subscription: Limited",
+            SubscriptionStatus.Expired => "🧟 Subscription: Expired",
+            _ => "❓ Subscription: Unknown"
+        };
+    }
 
-    public static string FormatGigabytes(double bytes) =>
-        (bytes / 1024.0 / 1024.0 / 1024.0).ToString("0.00");
+    public static string FormatGigabytes(double bytes)
+    {
+        return (bytes / 1024.0 / 1024.0 / 1024.0).ToString("0.00");
+    }
 
-    public static string GetTrafficLimitStrategy(int reset) =>
-        reset > 0 ? $"RESET_EVERY_{reset}_DAYS" : "UNLIMITED";
+    public static string GetTrafficLimitStrategy(int reset)
+    {
+        return reset > 0 ? $"RESET_EVERY_{reset}_DAYS" : "UNLIMITED";
+    }
 
     public static string BuildSubscriptionUrl(string panelBaseUri, string subId)
     {

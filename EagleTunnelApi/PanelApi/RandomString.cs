@@ -8,10 +8,7 @@ public static class RandomString
 
     public static string LowerAndNum(int length)
     {
-        if (length <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(length));
-        }
+        if (length <= 0) throw new ArgumentOutOfRangeException(nameof(length));
 
         // GetItems performs rejection sampling, avoiding the modulo bias of `bytes[i] % chars.Length`.
         return new string(RandomNumberGenerator.GetItems<char>(LowerAndNumChars, length));

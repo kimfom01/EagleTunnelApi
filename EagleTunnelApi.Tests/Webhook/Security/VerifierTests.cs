@@ -16,9 +16,14 @@ public class VerifierTests
 {
     private const string ApiKey = "test-secret";
 
-    private static Verifier CreateVerifier(string? apiKey = ApiKey) =>
-        new(Options.Create(new TributeOptions { ApiKey = apiKey ?? string.Empty }),
+    private const string SampleBody =
+        "{\"name\":\"renewed_subscription\",\"created_at\":\"2026-01-28T10:15:00Z\",\"sent_at\":\"2026-01-28T10:15:00Z\",\"payload\":{}}";
+
+    private static Verifier CreateVerifier(string? apiKey = ApiKey)
+    {
+        return new Verifier(Options.Create(new TributeOptions { ApiKey = apiKey ?? string.Empty }),
             NullLogger<Verifier>.Instance);
+    }
 
     private static string ComputeSignature(string body, string key = ApiKey)
     {
@@ -31,16 +36,10 @@ public class VerifierTests
         var context = new DefaultHttpContext();
         context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
 
-        if (signatureHeader is not null)
-        {
-            context.Request.Headers["trbt-signature"] = signatureHeader;
-        }
+        if (signatureHeader is not null) context.Request.Headers["trbt-signature"] = signatureHeader;
 
         return context.Request;
     }
-
-    private const string SampleBody =
-        "{\"name\":\"renewed_subscription\",\"created_at\":\"2026-01-28T10:15:00Z\",\"sent_at\":\"2026-01-28T10:15:00Z\",\"payload\":{}}";
 
     [Fact]
     public async Task VerifySignature_ValidSignature_ReturnsDeserializedWebhookEvent()
@@ -81,7 +80,7 @@ public class VerifierTests
     public async Task VerifySignature_MissingSignatureHeader_ThrowsInvalidSignatureException()
     {
         var verifier = CreateVerifier();
-        var request = CreateRequest(SampleBody, signatureHeader: null);
+        var request = CreateRequest(SampleBody, null);
 
         await Assert.ThrowsAsync<InvalidSignatureException>(() => verifier.VerifySignature(request));
     }
@@ -109,7 +108,7 @@ public class VerifierTests
     [Fact]
     public async Task VerifySignature_SignatureForDifferentKey_ThrowsInvalidSignatureException()
     {
-        var verifier = CreateVerifier(apiKey: "another-secret");
+        var verifier = CreateVerifier("another-secret");
         var request = CreateRequest(SampleBody, ComputeSignature(SampleBody, "other-key"));
 
         await Assert.ThrowsAsync<InvalidSignatureException>(() => verifier.VerifySignature(request));
@@ -118,7 +117,7 @@ public class VerifierTests
     [Fact]
     public async Task VerifySignature_MissingApiKey_ThrowsNotFoundException()
     {
-        var verifier = CreateVerifier(apiKey: null);
+        var verifier = CreateVerifier(null);
         var request = CreateRequest(SampleBody, ComputeSignature(SampleBody));
 
         await Assert.ThrowsAsync<NotFoundException>(() => verifier.VerifySignature(request));

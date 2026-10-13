@@ -4,7 +4,8 @@ using Microsoft.Extensions.Options;
 
 namespace EagleTunnelApi.Logging;
 
-public sealed class OutgoingRequestLoggingHandler(IOptions<TelegramOptions> telegramOptions,
+public sealed class OutgoingRequestLoggingHandler(
+    IOptions<TelegramOptions> telegramOptions,
     ILogger<OutgoingRequestLoggingHandler> logger) : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
@@ -46,9 +47,7 @@ public sealed class OutgoingRequestLoggingHandler(IOptions<TelegramOptions> tele
         var value = uri?.ToString() ?? "(null)";
 
         if (!string.IsNullOrEmpty(botToken))
-        {
             value = value.Replace($"/bot{botToken}/", "/bot{REDACTED}/", StringComparison.Ordinal);
-        }
 
         return value;
     }
