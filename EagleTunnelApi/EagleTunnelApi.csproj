@@ -14,12 +14,12 @@
              Must stay 2.x (>= 2.12.0): Microsoft.AspNetCore.OpenApi 10.0.12's source generator
              emits code that does not compile against 3.x. -->
         <PackageReference Include="Microsoft.OpenApi" Version="2.12.0" />
-        <PackageReference Include="NSwag.AspNetCore" Version="14.7.1"/>
-        <PackageReference Include="Telegram.Bot" Version="22.10.3" />
+        <PackageReference Include="NSwag.AspNetCore" Version="14.7.1" />
+        <PackageReference Include="Telegram.Bot" Version="22.10.3.3" />
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\EagleTunnelApi.ServiceDefaults\EagleTunnelApi.ServiceDefaults.csproj"/>
+        <ProjectReference Include="..\EagleTunnelApi.ServiceDefaults\EagleTunnelApi.ServiceDefaults.csproj" />
     </ItemGroup>
 
 </Project>
