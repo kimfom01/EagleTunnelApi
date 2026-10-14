@@ -10,6 +10,7 @@ using EagleTunnelApi.Webhook.Exceptions;
 using EagleTunnelApi.Webhook.Handlers;
 using EagleTunnelApi.Webhook.Security;
 using Microsoft.AspNetCore.Http.Json;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
@@ -18,6 +19,13 @@ using Telegram.Bot.Types;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 builder.Services.AddOpenApi();
 
@@ -95,7 +103,12 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUi(options => options.DocumentPath = "openapi/v1.json");
 }
 
-app.UseHttpsRedirection();
+// TLS is terminated at the Coolify proxy; internal traffic is plain HTTP.
+// UseForwardedHeaders restores the original scheme/host so redirects/URL
+// generation are correct. Do NOT use UseHttpsRedirection here: it turns the
+// Docker HEALTHCHECK (curl http://localhost:8080/alive) into a 307 redirect
+// to an https port that isn't listening, marking the container unhealthy.
+app.UseForwardedHeaders();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 
