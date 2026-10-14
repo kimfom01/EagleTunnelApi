@@ -315,4 +315,74 @@ public class AdminPanelServiceTests
         Assert.Equal(0, settled);
         Assert.DoesNotContain(requests, r => r.Method == HttpMethod.Post);
     }
+
+    [Fact]
+    public async Task SettleForEmail_UnclaimedGrantedAccount_PaysReferrerImmediately()
+    {
+        var referee = Client("newbie@example.com", 0, true,
+            DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeMilliseconds(),
+            "Registered by admin · Referrer tgId: 777 · Referred by: friend@example.com");
+        var referrer = ActiveClient("friend@example.com", 777);
+        var referrerOldExpiry = referrer.ExpiryTime;
+
+        var (service, bot, requests) = CreateService(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return StubHttpMessageHandler.Json(ClientByEmailJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/tgId/777")
+                return StubHttpMessageHandler.Json(ClientListJson(referrer));
+
+            if (path == "/admin/panel/api/clients/get/friend@example.com")
+                return StubHttpMessageHandler.Json(ClientByEmailJson(referrer));
+
+            if (path == "/admin/panel/api/clients/update/newbie@example.com" ||
+                path == "/admin/panel/api/clients/update/friend@example.com")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        var paid = await service.TrySettleReferralBonusForEmailAsync("newbie@example.com",
+            CancellationToken.None);
+
+        Assert.True(paid);
+
+        var referrerUpdates = UpdatesTo(requests, "friend@example.com");
+        Assert.Equal(2, referrerUpdates.Count); // bonus grant + credit ledger
+
+        var grantBody = await ReadBody(referrerUpdates[0]);
+        Assert.Equal(referrerOldExpiry + BonusDays * DayMs, grantBody.GetProperty("expiryTime").GetInt64());
+
+        var refereeUpdates = UpdatesTo(requests, "newbie@example.com");
+        Assert.Single(refereeUpdates);
+        Assert.Contains("Referral bonus paid",
+            (await ReadBody(refereeUpdates[0])).GetProperty("comment").GetString());
+
+        Assert.Contains(bot.Requests, r => r.MethodName == "sendMessage" && r.Body.Contains("30 days"));
+    }
+
+    [Fact]
+    public async Task SettleForEmail_TrialAccount_StaysPending()
+    {
+        var trial = TrialReferee() with { TgId = 0, Email = "newbie@example.com" };
+
+        var (service, _, requests) = CreateService(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return StubHttpMessageHandler.Json(ClientByEmailJson(trial));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        var paid = await service.TrySettleReferralBonusForEmailAsync("newbie@example.com",
+            CancellationToken.None);
+
+        Assert.False(paid);
+        Assert.DoesNotContain(requests, r => r.Method == HttpMethod.Post);
+    }
 }
