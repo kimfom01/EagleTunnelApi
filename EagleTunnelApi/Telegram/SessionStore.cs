@@ -60,6 +60,17 @@ public sealed class UserSession
     public bool FriendInviteActive { get; set; }
 
     public bool ReturnToReferral { get; set; }
+
+    /// <summary>
+    /// Email of the most recent friend invite, so its QR code can be re-sent
+    /// without stuffing the address into callback data (64-byte limit).
+    /// </summary>
+    public string? LastInviteEmail { get; set; }
+
+    /// <summary>
+    /// Resolved subscription URL of the most recent friend invite.
+    /// </summary>
+    public string? LastInviteSubscriptionUrl { get; set; }
 }
 
 public sealed class SessionStore
