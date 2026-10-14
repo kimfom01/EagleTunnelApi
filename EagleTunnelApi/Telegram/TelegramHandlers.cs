@@ -840,6 +840,14 @@ public sealed class TelegramHandlers : IUpdateHandler
             case MenuService.FriendRegister:
                 await StartFriendInvite(botClient, telegramId.Value, cancellationToken);
                 break;
+
+            case MenuService.QrOwn:
+                await SendOwnQrAsync(botClient, telegramId.Value, cancellationToken);
+                break;
+
+            case MenuService.QrFriend:
+                await SendLastInviteQrAsync(botClient, telegramId.Value, cancellationToken);
+                break;
         }
 
         await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
@@ -892,8 +900,9 @@ public sealed class TelegramHandlers : IUpdateHandler
     private static string ReferralScreenText()
     {
         return "🎁 *Invite Friends — Get 1 Month Free*\n\n" +
-            "1️⃣ Share your invite link below.\n" +
-            "2️⃣ Your friend registers and subscribes.\n" +
+            "1️⃣ Share your invite link below, or ➕ Register a Friend who can't reach Telegram — " +
+            "their free trial starts *immediately* and you get their VPN link + QR code to forward or show in person.\n" +
+            "2️⃣ Your friend links Telegram later (/start + email) and subscribes.\n" +
             "3️⃣ You get **+30 days** of VPN time.\n\n" +
             "Tip: once your bonus lands, cancel your Tribute renewal so you aren't billed while " +
             "covered — message support if you'd like the step-by-step video guide.";
@@ -1048,11 +1057,18 @@ public sealed class TelegramHandlers : IUpdateHandler
 
             if (existing.Client.TgId <= 0)
             {
+                var existingUrl = await ResolveSubscriptionUrlAsync(email!, cancellationToken);
+                session.LastInviteEmail = email;
+                session.LastInviteSubscriptionUrl = existingUrl;
+
                 await botClient.SendMessage(telegramId,
                     $"ℹ️ `{email}` was already invited and is still unclaimed — " +
-                    "they'll link it when they start the bot.",
+                    "they'll link it when they start the bot and enter this email.",
                     ParseMode.Markdown,
                     cancellationToken: cancellationToken);
+
+                if (existingUrl is not null)
+                    await SendInviteShareAsync(botClient, telegramId, email!, existingUrl, cancellationToken);
                 return;
             }
 
@@ -1064,19 +1080,23 @@ public sealed class TelegramHandlers : IUpdateHandler
         }
 
         var inviterEmail = own.Client.Email;
-        // Friend invites start inactive with no trial: the trial begins only when
-        // the invitee starts the bot and links this email (see ClaimInvitedAccountAsync).
-        var expiryTimeMs = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds();
+        // Offline-friend flow: the invite starts its free trial immediately so the
+        // friend gets VPN access right away (before ever touching Telegram).
+        // They link their Telegram later by starting the bot and entering this
+        // email, then pay to keep access after the trial.
+        var (inviteEnable, inviteExpiryMs, inviteTrialEnds) = NewAccountState();
         var comment =
             $"Invited by {inviterEmail} · Referrer tgId: {telegramId} · Referred by: {inviterEmail}";
+
+        if (inviteTrialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, inviteTrialEnds.Value);
 
         try
         {
             await _panelClient.AddClientAsync(new CreateClientPayload(
-                PanelClientDefaults.CreateClient(email, false, expiryTimeMs, 0, comment),
+                PanelClientDefaults.CreateClient(email, inviteEnable, inviteExpiryMs, 0, comment),
                 _telegramOptions.DefaultInboundIds.ToList()), cancellationToken);
 
-            await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
+            if (!inviteEnable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
         }
         catch (PanelApiException ex)
         {
@@ -1090,11 +1110,126 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.FriendInviteActive = false;
         _logger.LogInformation("Friend invite created. Email: {Email}, Inviter: {Inviter}", email, inviterEmail);
 
+        var subscriptionUrl = await ResolveSubscriptionUrlAsync(email!, cancellationToken);
+        session.LastInviteEmail = email;
+        session.LastInviteSubscriptionUrl = subscriptionUrl;
+
+        var trialLine = inviteTrialEnds.HasValue
+            ? $"🎁 Free trial is **active now** until {inviteTrialEnds.Value:yyyy-MM-dd HH:mm} UTC — " +
+              "share the link or QR below so they can connect immediately.\n\n"
+            : "They'll link it when they start the bot and enter this email.\n\n";
+
         await botClient.SendMessage(telegramId,
-            $"✅ Invite created for `{email}` — they'll get their free trial as your referral " +
-            "when they start the bot and enter this email.",
+            $"✅ Invite created for `{email}` as your referral.\n\n" +
+            trialLine +
+            "When they get Telegram access, they start the bot, enter this email to link it, " +
+            "and subscribe to keep access after the trial.",
             ParseMode.Markdown,
             cancellationToken: cancellationToken);
+
+        if (subscriptionUrl is not null)
+            await SendInviteShareAsync(botClient, telegramId, email!, subscriptionUrl, cancellationToken);
+    }
+
+    private async Task<string?> ResolveSubscriptionUrlAsync(string email, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var created = await _panelClient.GetClientByEmailAsync(email, cancellationToken);
+            var subId = created?.Client?.SubId;
+            return string.IsNullOrEmpty(subId)
+                ? null
+                : SubscriptionFormatter.BuildSubscriptionUrl(_panelBaseUri, subId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Invite link lookup failed. Email: {Email}", email);
+            return null;
+        }
+    }
+
+    private async Task SendInviteShareAsync(ITelegramBotClient botClient, long telegramId, string email,
+        string subscriptionUrl, CancellationToken cancellationToken)
+    {
+        await botClient.SendMessage(telegramId,
+            $"🔗 VPN link for `{email}`:\n`{subscriptionUrl}`\n\n" +
+            "Forward this link, or show them the QR code below to scan.",
+            ParseMode.Markdown,
+            replyMarkup: MenuService.InviteShareMenu(subscriptionUrl),
+            cancellationToken: cancellationToken);
+
+        await SendQrPhotoAsync(botClient, telegramId, subscriptionUrl,
+            $"🔳 QR code for {email} — scan it to add the VPN.",
+            cancellationToken);
+    }
+
+    private async Task SendQrPhotoAsync(ITelegramBotClient botClient, long chatId, string subscriptionUrl,
+        string caption, CancellationToken cancellationToken)
+    {
+        byte[] png;
+        try
+        {
+            png = QrCodeService.GeneratePng(subscriptionUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "QR generation failed.");
+            await botClient.SendMessage(chatId,
+                $"🔗 VPN link:\n`{subscriptionUrl}`",
+                ParseMode.Markdown,
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        using var stream = new MemoryStream(png);
+        await botClient.SendPhoto(chatId, new InputFileStream(stream, "vpn-qr.png"),
+            caption: caption, cancellationToken: cancellationToken);
+    }
+
+    private async Task SendOwnQrAsync(ITelegramBotClient botClient, long telegramId,
+        CancellationToken cancellationToken)
+    {
+        var userDetails = await GetUserDetails(telegramId, cancellationToken);
+        var url = userDetails?.SubscriptionUrl ?? _sessionStore.Get(telegramId).SubscriptionUrl;
+
+        if (string.IsNullOrEmpty(url))
+        {
+            await botClient.SendMessage(telegramId,
+                "❌ No VPN link found yet. Please use /start to check your account.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        await SendQrPhotoAsync(botClient, telegramId, url,
+            "🔳 Scan this QR code to add your VPN.",
+            cancellationToken);
+    }
+
+    private async Task SendLastInviteQrAsync(ITelegramBotClient botClient, long telegramId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        var url = session.LastInviteSubscriptionUrl;
+        var email = session.LastInviteEmail;
+
+        if (url is null && email is not null)
+        {
+            url = await ResolveSubscriptionUrlAsync(email, cancellationToken);
+            session.LastInviteSubscriptionUrl = url;
+        }
+
+        if (url is null)
+        {
+            await botClient.SendMessage(telegramId,
+                "❌ No recent friend invite found — use ➕ Register a Friend first, " +
+                "then come back for its QR code.",
+                cancellationToken: cancellationToken);
+            return;
+        }
+
+        await SendQrPhotoAsync(botClient, telegramId, url,
+            email is not null ? $"🔳 QR code for {email} — scan it to add the VPN." : "🔳 Friend invite QR code.",
+            cancellationToken);
     }
 
     private async Task ClaimInvitedAccountAsync(ITelegramBotClient botClient, long telegramId, User? from,
@@ -1117,17 +1252,24 @@ public sealed class TelegramHandlers : IUpdateHandler
                 invited.Email);
         }
 
-        // Friend invites are created inactive with no trial; the trial starts now,
-        // when the invitee links their Telegram by providing this email.
-        // Rows that already carry a trial (e.g. admin-registered) or paid access
-        // keep their existing state.
+        // Invites now start their trial immediately (offline-friend flow), so a
+        // legacy disabled row without a trial is the only case that still starts
+        // one at claim time. Rows that already carry a trial keep it — unless it
+        // already expired before the friend claimed, in which case restart it so
+        // a late claimer still gets the promised trial window.
         var startTrial = !ReferralService.HasEverBeenProvisioned(invited)
             && !ReferralService.HasTrialTag(invited.Comment)
             && !invited.Enable;
 
-        if (startTrial)
+        var restartExpiredTrial = !ReferralService.HasEverBeenProvisioned(invited)
+            && ReferralService.HasTrialTag(invited.Comment)
+            && invited.ExpiryTime <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            && _telegramOptions.TrialDurationHours > 0;
+
+        if (startTrial || restartExpiredTrial)
         {
             var (trialEnable, trialExpiryMs, trialEnds) = NewAccountState();
+            if (restartExpiredTrial) comment = ReferralService.ClearTrialTag(comment);
             if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
 
             try
@@ -2330,9 +2472,16 @@ public sealed class TelegramHandlers : IUpdateHandler
             _logger.LogInformation("Admin registered account. Email: {Email}", email);
 
             await botClient.SendMessage(adminId,
-                $"✅ Account created for `{email}` — they'll link it when they start the bot.",
+                trialEnds.HasValue
+                    ? $"✅ Account created for `{email}` — trial active now until {trialEnds.Value:yyyy-MM-dd HH:mm} UTC. " +
+                      "Share the link/QR below so they can connect immediately; they'll link Telegram later via /start."
+                    : $"✅ Account created for `{email}` — they'll link it when they start the bot.",
                 ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
                 cancellationToken: cancellationToken);
+
+            var adminUrl = await ResolveSubscriptionUrlAsync(email, cancellationToken);
+            if (adminUrl is not null)
+                await SendInviteShareAsync(botClient, adminId, email, adminUrl, cancellationToken);
         }
         catch (PanelApiException ex)
         {

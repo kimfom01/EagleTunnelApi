@@ -21,7 +21,7 @@ subscription status, and retrieve their VPN link.
 - **Referral Program:** Email-based invite links (`t.me/<bot>?start=ref_<telegramId>`); referrers earn bonus days when a
   referee pays for the first time. Friends can be pre-registered by email and claim their account on `/start`. See
   [Referral System](#referral-system).
-- **Free Trial:** Newly registered accounts are enabled for `Telegram:TrialDurationHours` (default `2`) so users can
+- **Free Trial:** Newly registered accounts are enabled for `Telegram:TrialDurationHours` (default `3`) so users can
   connect immediately; first payment ends the trial and preserves any referral attribution.
 - **Expiry Reminders:** Daily reminders (3 / 2 / 1 / 0 days out) for cancelled, email-migrated accounts approaching
   expiry; instant manual nudges via `/admin` → `📨 Send Reminder`.
@@ -110,7 +110,7 @@ Configuration is handled via standard ASP.NET Core mechanisms (`appsettings.json
 | `Telegram:BotUsername`        | `Telegram__BotUsername`        | Bot username without `@` (e.g. `EagleTunnelBot`), used to build referral links.              |
 | `Telegram:ReferralBonusDays`  | `Telegram__ReferralBonusDays`  | Free days granted to a referrer on the referee's first payment (default `30`, `0` disables). |
 | `Telegram:ReminderHourUtc`    | `Telegram__ReminderHourUtc`    | Hour of day in UTC (`0`-`23`) when expiry reminders are sent (default `9`).                  |
-| `Telegram:TrialDurationHours` | `Telegram__TrialDurationHours` | Free trial hours for newly registered accounts (default `2`, `0` disables).                  |
+| `Telegram:TrialDurationHours` | `Telegram__TrialDurationHours` | Free trial hours for newly registered accounts (default `3`, `0` disables).                  |
 
 ### Example `.env` file:
 
@@ -192,10 +192,14 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 - **Invite links:** Every user gets a personal link behind the `🎁 Invite Friends — Get 1 Month Free` menu button.
   Legacy `tg{id}` accounts are asked for a one-time login-email update when they open that screen.
 - **Pre-registration:** Users can register a friend's email from the invite screen, and admins via `/admin` →
-  `➕ Register Account`. The account waits unlinked (`TgId=0`) and is auto-linked — keeping its referrer — when the
-  friend starts the bot and enters that email. Friend invites wait disabled with no trial until claimed; the free
-  trial starts when the invitee links the account.
-- **Free trial:** New (never-provisioned) accounts are enabled for `Telegram:TrialDurationHours` (default `2`) so users
+  `➕ Register Account`. The friend's free trial starts **immediately** so they get VPN access before ever touching
+  Telegram (offline-friend flow: register → share link/QR → friend connects → friend later starts the bot, enters the
+  email to link Telegram, and pays). The inviter instantly receives the friend's VPN link (tap-to-copy) plus a
+  scannable **QR code** (`🔳 Friend QR Code` re-sends it). If the trial already expired before the friend claims, the
+  claim restarts a fresh trial.
+- **QR codes:** Active users get `🔳 Show QR Code` on the main menu for their own subscription link; every friend/admin
+  invite shares its link as a QR photo for in-person scanning when a link can't be forwarded.
+- **Free trial:** New (never-provisioned) accounts are enabled for `Telegram:TrialDurationHours` (default `3`) so users
   can connect immediately; the first payment ends the trial (tag cleared) without touching referral attribution.
 - **Bonus:** When a referred friend pays for the first time, the referrer gets
   `Telegram:ReferralBonusDays` (default `30`) added to their VPN expiry. The payout fires on the first paid

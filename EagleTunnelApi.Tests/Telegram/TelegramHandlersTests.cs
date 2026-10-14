@@ -746,18 +746,32 @@ public class TelegramHandlersTests
     {
         var requests = new List<HttpRequestMessage>();
         var inviter = ActiveClient();
+        var createdInvite = ActiveClient() with
+        {
+            Email = "pal@example.com",
+            TgId = 0,
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+            SubId = "palsub123",
+            Comment = "Invited by user@example.com"
+        };
 
         var (handler, bot) = CreateHandler(request =>
         {
-            requests.Add(request);
             var path = request.RequestUri!.AbsolutePath;
 
             if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
                 return Json(ClientListJson(inviter));
 
             if (path == "/admin/panel/api/clients/get/pal@example.com")
-                return Json(FailureJson("not found"));
+            {
+                var alreadyCreated = requests.Any(r => r.Method == HttpMethod.Post &&
+                    r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+                requests.Add(request);
+                return Json(alreadyCreated ? ClientByEmailJson(createdInvite) : FailureJson("not found"));
+            }
 
+            requests.Add(request);
             if (path == "/admin/panel/api/clients/add" ||
                 path == "/admin/panel/api/clients/bulkDisable")
                 return Json(SuccessJson());
@@ -779,18 +793,189 @@ public class TelegramHandlersTests
 
         Assert.Equal("pal@example.com", client.GetProperty("email").GetString());
         Assert.Equal(0, client.GetProperty("tgId").GetInt64());
-        Assert.False(client.GetProperty("enable").GetBoolean());
+
+        // Offline-friend flow: the trial starts immediately so the friend can
+        // connect before ever touching Telegram.
+        Assert.True(client.GetProperty("enable").GetBoolean());
 
         var comment = client.GetProperty("comment").GetString()!;
         Assert.Contains($"Referrer tgId: {TelegramId}", comment);
         Assert.Contains("Referred by: user@example.com", comment);
-        Assert.DoesNotContain("Trial until", comment);
+        Assert.Contains("Trial until", comment);
+        Assert.InRange(client.GetProperty("expiryTime").GetInt64(),
+            DateTimeOffset.UtcNow.AddHours(2).AddMinutes(-2).ToUnixTimeMilliseconds(),
+            DateTimeOffset.UtcNow.AddHours(2).AddMinutes(2).ToUnixTimeMilliseconds());
 
-        Assert.Contains(requests,
+        Assert.DoesNotContain(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/bulkDisable");
 
-        var done = bot.Requests.Last(r => r.MethodName == "sendMessage");
-        Assert.Contains("Invite created", done.Body);
+        var done = bot.Requests.First(r => r.MethodName == "sendMessage" && r.Body.Contains("Invite created"));
+        Assert.Contains("active now", done.Body);
+
+        // The inviter gets the shareable subscription link plus a QR photo.
+        var share = bot.Requests.First(r => r.MethodName == "sendMessage" && r.Body.Contains("palsub123"));
+        Assert.Contains("Copy VPN Link", share.Body);
+        Assert.Contains("qr:friend", share.Body);
+
+        var qr = Assert.Single(bot.Requests, r => r.MethodName == "sendPhoto");
+        Assert.Contains("qr.png", qr.Body);
+    }
+
+    [Fact]
+    public async Task FriendInvite_TrialDisabled_CreatesDisabledAccountWithoutLink()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var inviter = ActiveClient();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return Json(ClientListJson(inviter));
+
+            if (path == "/admin/panel/api/clients/get/pal@example.com")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/add" ||
+                path == "/admin/panel/api/clients/bulkDisable")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, trialHours: 0);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.FriendRegister), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("pal@example.com"), CancellationToken.None);
+
+        var addRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        var client = (await ReadJson(addRequest)).GetProperty("client");
+
+        Assert.False(client.GetProperty("enable").GetBoolean());
+        Assert.DoesNotContain("Trial until", client.GetProperty("comment").GetString());
+        Assert.Contains(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/bulkDisable");
+        Assert.DoesNotContain(bot.Requests, r => r.MethodName == "sendPhoto");
+    }
+
+    [Fact]
+    public async Task FriendInvite_AlreadyInvited_ResendsLinkAndQr()
+    {
+        var inviter = ActiveClient();
+        var unclaimed = ActiveClient() with
+        {
+            Email = "pal@example.com",
+            TgId = 0,
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+            SubId = "palsub123",
+            Comment = "Invited by user@example.com"
+        };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return Json(ClientListJson(inviter));
+
+            if (path == "/admin/panel/api/clients/get/pal@example.com")
+                return Json(ClientByEmailJson(unclaimed));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.FriendRegister), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("pal@example.com"), CancellationToken.None);
+
+        var info = bot.Requests.First(r => r.MethodName == "sendMessage" && r.Body.Contains("still unclaimed"));
+        var share = bot.Requests.First(r => r.MethodName == "sendMessage" && r.Body.Contains("palsub123"));
+        Assert.Contains("Copy VPN Link", share.Body);
+
+        var qr = Assert.Single(bot.Requests, r => r.MethodName == "sendPhoto");
+        Assert.Contains("qr.png", qr.Body);
+    }
+
+    [Fact]
+    public async Task QrOwn_SendsQrPhotoForActiveUser()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.QrOwn), CancellationToken.None);
+
+        var qr = Assert.Single(bot.Requests, r => r.MethodName == "sendPhoto");
+        Assert.Contains("qr.png", qr.Body);
+    }
+
+    [Fact]
+    public async Task QrFriend_WithoutInvite_ExplainsMissing()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(ActiveClient())));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.QrFriend), CancellationToken.None);
+
+        var msg = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("No recent friend invite", msg.Body);
+    }
+
+    [Fact]
+    public async Task Claim_ExpiredTrialInvite_RestartsTrialOnClaim()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var getCount = 0;
+        var expiredInvite = ActiveClient() with
+        {
+            Email = "newbie@example.com",
+            TgId = 0,
+            Enable = true,
+            ExpiryTime = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds(),
+            Comment = "Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com · Trial until 2000-01-01 00:00 UTC"
+        };
+        var claimed = expiredInvite with { TgId = TelegramId };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+            {
+                getCount++;
+                return Json(getCount == 1 ? EmptyListJson() : ClientListJson(claimed));
+            }
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(ClientByEmailJson(expiredInvite));
+
+            if (path == "/admin/panel/api/clients/get/tg12345")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/update/newbie@example.com")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/start"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+
+        var linkRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post &&
+                r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/update/newbie@example.com");
+        var linkBody = await ReadJson(linkRequest);
+
+        Assert.Equal(TelegramId, linkBody.GetProperty("tgId").GetInt64());
+        Assert.True(linkBody.GetProperty("enable").GetBoolean());
+        // Expired trial restarted: fresh ~2h expiry, no stale 2000 tag.
+        Assert.InRange(linkBody.GetProperty("expiryTime").GetInt64(),
+            DateTimeOffset.UtcNow.AddHours(2).AddMinutes(-2).ToUnixTimeMilliseconds(),
+            DateTimeOffset.UtcNow.AddHours(2).AddMinutes(2).ToUnixTimeMilliseconds());
+        Assert.DoesNotContain("2000-01-01", linkBody.GetProperty("comment").GetString());
+        Assert.Contains("Trial until", linkBody.GetProperty("comment").GetString());
+        Assert.Contains("Referred by: friend@example.com", linkBody.GetProperty("comment").GetString());
     }
 
     [Fact]

@@ -1,7 +1,8 @@
 ﻿FROM mcr.microsoft.com/dotnet/aspnet:10.0.0-alpine3.22 AS base
-USER $APP_UID
 WORKDIR /app
 EXPOSE 8080
+RUN apk add --no-cache curl
+USER $APP_UID
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0.100-alpine3.22 AS build
 ARG BUILD_CONFIGURATION=Release
@@ -20,4 +21,6 @@ RUN dotnet publish "./EagleTunnelApi.csproj" -c $BUILD_CONFIGURATION -o /app/pub
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost:8080/alive || exit 1
 ENTRYPOINT ["dotnet", "EagleTunnelApi.dll"]

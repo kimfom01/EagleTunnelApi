@@ -13,6 +13,8 @@ public static class MenuService
     public const string RefEdit = "ref:edit";
     public const string RefSkip = "ref:skip";
     public const string FriendRegister = "friend:register";
+    public const string QrOwn = "qr:own";
+    public const string QrFriend = "qr:friend";
 
     public const string Admin = "admin";
     public const string AdminLookup = "admin:lookup";
@@ -55,6 +57,7 @@ public static class MenuService
             rows.Add([
                 InlineKeyboardButton.WithCopyText("📋 Copy VPN Link", new CopyTextButton { Text = subscriptionUrl! })
             ]);
+            rows.Add([InlineKeyboardButton.WithCallbackData("🔳 Show QR Code", QrOwn)]);
         }
         else
         {
@@ -147,8 +150,18 @@ public static class MenuService
         [
             [InlineKeyboardButton.WithCopyText("📋 Copy Invite Link", new CopyTextButton { Text = referralLink })],
             [InlineKeyboardButton.WithCallbackData("➕ Register a Friend", FriendRegister)],
+            [InlineKeyboardButton.WithCallbackData("🔳 Friend QR Code", QrFriend)],
             [InlineKeyboardButton.WithUrl("📹 Cancel Guide? Message Support", supportUrl)],
             [InlineKeyboardButton.WithCallbackData("🔙 Back", Back)]
+        ]);
+    }
+
+    public static InlineKeyboardMarkup InviteShareMenu(string subscriptionUrl)
+    {
+        return new InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton.WithCopyText("📋 Copy VPN Link", new CopyTextButton { Text = subscriptionUrl })],
+            [InlineKeyboardButton.WithCallbackData("🔳 Show QR Again", QrFriend)]
         ]);
     }
 

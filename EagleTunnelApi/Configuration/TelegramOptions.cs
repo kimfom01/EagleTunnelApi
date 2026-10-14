@@ -26,5 +26,5 @@ public sealed class TelegramOptions
 
     public int ReminderHourUtc { get; set; } = 9;
 
-    public int TrialDurationHours { get; set; } = 2;
+    public int TrialDurationHours { get; set; } = 3;
 }
