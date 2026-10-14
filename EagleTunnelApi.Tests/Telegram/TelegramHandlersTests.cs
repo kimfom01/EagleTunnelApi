@@ -1142,6 +1142,11 @@ public class TelegramHandlersTests
 
         await handler.HandleUpdateAsync(bot, TextUpdate("friend@example.com"), CancellationToken.None);
 
+        var grantPrompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("days", grantPrompt.Body.ToLowerInvariant());
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+
         var addRequest = Assert.Single(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
         var client = (await ReadJson(addRequest)).GetProperty("client");
@@ -1181,10 +1186,177 @@ public class TelegramHandlersTests
         await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
 
+        var grantPrompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("days", grantPrompt.Body.ToLowerInvariant());
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+
         var addRequest = Assert.Single(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
         Assert.DoesNotContain("Referred by",
             (await ReadJson(addRequest)).GetProperty("client").GetProperty("comment").GetString());
+    }
+
+    [Fact]
+    public async Task AdminRegister_GrantDays_CreatesWithExpiry()
+    {
+        var requests = new List<HttpRequestMessage>();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/add") return Json(SuccessJson());
+
+            if (path == "/admin/panel/api/clients/get/sub/newbie@example.com")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminRegister), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+
+        var grantPrompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("days", grantPrompt.Body.ToLowerInvariant());
+
+        var before = DateTimeOffset.UtcNow;
+        await handler.HandleUpdateAsync(bot, TextUpdate("30"), CancellationToken.None);
+
+        var addRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        var client = (await ReadJson(addRequest)).GetProperty("client");
+
+        Assert.Equal("newbie@example.com", client.GetProperty("email").GetString());
+        Assert.True(client.GetProperty("enable").GetBoolean());
+
+        var expiryMs = client.GetProperty("expiryTime").GetInt64();
+        var expiry = DateTimeOffset.FromUnixTimeMilliseconds(expiryMs);
+        Assert.InRange(expiry, before.AddDays(30).AddMinutes(-2), before.AddDays(30).AddMinutes(2));
+
+        var comment = client.GetProperty("comment").GetString()!;
+        Assert.DoesNotContain("Trial until", comment);
+
+        var done = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("30 days", done.Body);
+    }
+
+    [Fact]
+    public async Task AdminRegister_GrantDays_Invalid_Reprompts()
+    {
+        var requests = new List<HttpRequestMessage>();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/add") return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminRegister), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("abc"), CancellationToken.None);
+
+        var reprompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("Invalid number of days", reprompt.Body);
+        Assert.DoesNotContain(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+
+        Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+    }
+
+    [Fact]
+    public async Task AdminRegister_GrantDays_WithReferrer_PaysBonusImmediately()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var friend = ReferrerAccount();
+        var getNewbieCount = 0;
+
+        PanelClient GrantedReferee()
+        {
+            return ActiveClient() with
+            {
+                Email = "newbie@example.com",
+                TgId = 0,
+                Enable = true,
+                ExpiryTime = DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeMilliseconds(),
+                Comment = "Registered by admin · Referrer tgId: 777 · Referred by: friend@example.com"
+            };
+        }
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+            {
+                getNewbieCount++;
+                // First lookup: clash check (not found). Later: settlement + link lookups.
+                if (getNewbieCount == 1) return Json(FailureJson("not found"));
+                return Json(ClientByEmailJson(GrantedReferee()));
+            }
+
+            if (path == "/admin/panel/api/clients/get/friend@example.com")
+                return Json(ClientByEmailJson(friend));
+
+            if (path == "/admin/panel/api/clients/get/tgId/777")
+                return Json(ClientListJson(friend));
+
+            if (path == "/admin/panel/api/clients/add") return Json(SuccessJson());
+
+            if (path == "/admin/panel/api/clients/update/newbie@example.com" ||
+                path == "/admin/panel/api/clients/update/friend@example.com")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminRegister), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("friend@example.com"), CancellationToken.None);
+
+        var grantPrompt = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        Assert.Contains("days", grantPrompt.Body.ToLowerInvariant());
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("30"), CancellationToken.None);
+
+        // New account created with grant.
+        var addRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/add");
+        Assert.Equal("newbie@example.com",
+            (await ReadJson(addRequest)).GetProperty("client").GetProperty("email").GetString());
+
+        // Referrer got bonus grant + credit ledger.
+        var referrerUpdates = requests.Where(r => r.Method == HttpMethod.Post &&
+            r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/update/friend@example.com").ToList();
+        Assert.Equal(2, referrerUpdates.Count);
+
+        // Referee marked bonus-paid.
+        var refereeUpdates = requests.Where(r => r.Method == HttpMethod.Post &&
+            r.RequestUri!.AbsolutePath == "/admin/panel/api/clients/update/newbie@example.com").ToList();
+        Assert.Single(refereeUpdates);
+        Assert.Contains("Referral bonus paid",
+            (await ReadJson(refereeUpdates[0])).GetProperty("comment").GetString());
+
+        var done = bot.Requests.Last(r => r.MethodName == "sendMessage" && r.Body.Contains("Account created"));
+        Assert.Contains("30 days", done.Body);
+        Assert.Contains("Referrer", done.Body);
     }
 
     [Fact]

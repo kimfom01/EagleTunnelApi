@@ -18,6 +18,7 @@ public enum AdminAction
     NudgeTarget,
     RegisterTarget,
     RegisterReferrer,
+    RegisterDays,
     ChangeEmailTarget,
     ChangeEmailValue
 }
@@ -40,6 +41,10 @@ public sealed class UserSession
     public AdminAction AdminAction { get; set; } = AdminAction.None;
 
     public string? AdminTargetEmail { get; set; }
+
+    public long? AdminReferrerTgId { get; set; }
+
+    public string? AdminReferrerEmail { get; set; }
 
     public List<string>? AdminCandidates { get; set; }
 

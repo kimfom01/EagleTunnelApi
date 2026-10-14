@@ -1397,6 +1397,8 @@ public sealed class TelegramHandlers : IUpdateHandler
         var session = _sessionStore.Get(telegramId);
         session.AdminAction = AdminAction.None;
         session.AdminTargetEmail = null;
+        session.AdminReferrerTgId = null;
+        session.AdminReferrerEmail = null;
 
         await botClient.SendMessage(telegramId,
             "🛠 *Admin Panel*\n\nPick an action to manage your panel.",
@@ -1410,6 +1412,8 @@ public sealed class TelegramHandlers : IUpdateHandler
         var session = _sessionStore.Get(telegramId);
         session.AdminAction = AdminAction.None;
         session.AdminTargetEmail = null;
+        session.AdminReferrerTgId = null;
+        session.AdminReferrerEmail = null;
 
         await botClient.EditMessageText(telegramId, messageId,
             "🛠 *Admin Panel*\n\nPick an action to manage your panel.",
@@ -1690,6 +1694,8 @@ public sealed class TelegramHandlers : IUpdateHandler
                 }
 
                 session.AdminTargetEmail = newEmail;
+                session.AdminReferrerTgId = null;
+                session.AdminReferrerEmail = null;
                 session.AdminAction = AdminAction.RegisterReferrer;
                 await botClient.SendMessage(telegramId,
                     $"➕ Register `{newEmail}`. Reply with the referrer's **email address**, or /skip for none:",
@@ -1707,10 +1713,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
                 if (input.Equals("/skip", StringComparison.OrdinalIgnoreCase))
                 {
-                    session.AdminAction = AdminAction.None;
-                    session.AdminTargetEmail = null;
-                    await CreateAdminRegisteredClientAsync(botClient, telegramId, pendingEmail, null, null,
-                        cancellationToken);
+                    await PromptRegisterGrantAsync(botClient, telegramId, null, null, cancellationToken);
                     return;
                 }
 
@@ -1778,13 +1781,11 @@ public sealed class TelegramHandlers : IUpdateHandler
 
                 if (refMatches.Count == 0)
                 {
-                    session.AdminAction = AdminAction.None;
-                    session.AdminTargetEmail = null;
                     await botClient.SendMessage(telegramId,
                         $"ℹ️ `{candidate}` isn't registered — saving as a pending referrer. " +
                         "It counts if they register before the new user subscribes.",
                         ParseMode.Markdown, cancellationToken: cancellationToken);
-                    await CreateAdminRegisteredClientAsync(botClient, telegramId, pendingEmail, null,
+                    await PromptRegisterGrantAsync(botClient, telegramId, null,
                         candidate, cancellationToken);
                     return;
                 }
@@ -1816,6 +1817,48 @@ public sealed class TelegramHandlers : IUpdateHandler
 
                 await SendPickListAsync(botClient, telegramId, refMatches, cancellationToken);
                 return;
+
+            case AdminAction.RegisterDays:
+                var grantEmail = session.AdminTargetEmail;
+
+                if (grantEmail is null)
+                {
+                    await ShowAdminMenu(botClient, telegramId, cancellationToken);
+                    return;
+                }
+
+                if (input.Equals("/skip", StringComparison.OrdinalIgnoreCase))
+                {
+                    var skipReferrerTgId = session.AdminReferrerTgId;
+                    var skipReferrerEmail = session.AdminReferrerEmail;
+                    session.AdminAction = AdminAction.None;
+                    session.AdminTargetEmail = null;
+                    session.AdminReferrerTgId = null;
+                    session.AdminReferrerEmail = null;
+                    await CreateAdminRegisteredClientAsync(botClient, telegramId, grantEmail,
+                        skipReferrerTgId, skipReferrerEmail, cancellationToken);
+                    return;
+                }
+
+                if (!int.TryParse(input, out var grantDays) || grantDays <= 0)
+                {
+                    await botClient.SendMessage(telegramId,
+                        "❌ Invalid number of days. Reply with a positive number, or /skip for none.",
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                {
+                    var referrerTgId = session.AdminReferrerTgId;
+                    var referrerEmail = session.AdminReferrerEmail;
+                    session.AdminAction = AdminAction.None;
+                    session.AdminTargetEmail = null;
+                    session.AdminReferrerTgId = null;
+                    session.AdminReferrerEmail = null;
+                    await CreateAdminRegisteredClientAsync(botClient, telegramId, grantEmail,
+                        referrerTgId, referrerEmail, cancellationToken, grantDays);
+                    return;
+                }
 
             case AdminAction.ChangeEmailValue:
                 var changeTarget = session.AdminTargetEmail;
@@ -2061,9 +2104,7 @@ public sealed class TelegramHandlers : IUpdateHandler
                     return;
                 }
 
-                session.AdminAction = AdminAction.None;
-                session.AdminTargetEmail = null;
-                await CreateAdminRegisteredClientAsync(botClient, adminId, pendingEmail,
+                await PromptRegisterGrantAsync(botClient, adminId,
                     target.TgId > 0 ? target.TgId : null, target.Email, cancellationToken);
                 return;
 
@@ -2448,10 +2489,44 @@ public sealed class TelegramHandlers : IUpdateHandler
             replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
     }
 
-    private async Task CreateAdminRegisteredClientAsync(ITelegramBotClient botClient, long adminId,
-        string email, long? referrerTgId, string? referrerEmail, CancellationToken cancellationToken)
+    private async Task PromptRegisterGrantAsync(ITelegramBotClient botClient, long adminId,
+        long? referrerTgId, string? referrerEmail, CancellationToken cancellationToken)
     {
+        var session = _sessionStore.Get(adminId);
+
+        if (session.AdminTargetEmail is null)
+        {
+            await ShowAdminMenu(botClient, adminId, cancellationToken);
+            return;
+        }
+
+        session.AdminReferrerTgId = referrerTgId;
+        session.AdminReferrerEmail = referrerEmail;
+        session.AdminAction = AdminAction.RegisterDays;
+
+        await botClient.SendMessage(adminId,
+            $"🎁 Grant access to `{session.AdminTargetEmail}` immediately? " +
+            "Reply with the number of **days** (e.g. `30`), or /skip for none:",
+            ParseMode.Markdown, replyMarkup: MenuService.AdminInputMenu(),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task CreateAdminRegisteredClientAsync(ITelegramBotClient botClient, long adminId,
+        string email, long? referrerTgId, string? referrerEmail, CancellationToken cancellationToken,
+        int? grantDays = null)
+    {
+        var hasGrant = grantDays.HasValue && grantDays.Value > 0;
         var (enable, expiryTimeMs, trialEnds) = NewAccountState();
+        DateTimeOffset? grantEnds = null;
+
+        if (hasGrant)
+        {
+            grantEnds = DateTimeOffset.UtcNow.AddDays(grantDays!.Value);
+            enable = true;
+            expiryTimeMs = grantEnds.Value.ToUnixTimeMilliseconds();
+            trialEnds = null;
+        }
+
         var comment = "Registered by admin";
 
         if (referrerTgId is long tgId) comment = ReferralService.AppendTag(comment, $"Referrer tgId: {tgId}");
@@ -2471,11 +2546,33 @@ public sealed class TelegramHandlers : IUpdateHandler
 
             _logger.LogInformation("Admin registered account. Email: {Email}", email);
 
+            var referrerBonusPaid = false;
+            if (hasGrant && referrerEmail is not null)
+            {
+                try
+                {
+                    referrerBonusPaid =
+                        await _adminPanelService.TrySettleReferralBonusForEmailAsync(email, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Admin-register referral settlement failed. Email: {Email}", email);
+                }
+            }
+
+            var bonusLine = referrerBonusPaid
+                ? $"\n\n🎁 Referrer `{referrerEmail}` earned **+{_telegramOptions.ReferralBonusDays} days**."
+                : "";
+
             await botClient.SendMessage(adminId,
-                trialEnds.HasValue
-                    ? $"✅ Account created for `{email}` — trial active now until {trialEnds.Value:yyyy-MM-dd HH:mm} UTC. " +
-                      "Share the link/QR below so they can connect immediately; they'll link Telegram later via /start."
-                    : $"✅ Account created for `{email}` — they'll link it when they start the bot.",
+                grantEnds.HasValue
+                    ? $"✅ Account created for `{email}` — **{grantDays} days** granted until {grantEnds.Value:yyyy-MM-dd HH:mm} UTC. " +
+                      "Share the link/QR below so they can connect immediately; they'll link Telegram later via /start." +
+                      bonusLine
+                    : trialEnds.HasValue
+                        ? $"✅ Account created for `{email}` — trial active now until {trialEnds.Value:yyyy-MM-dd HH:mm} UTC. " +
+                          "Share the link/QR below so they can connect immediately; they'll link Telegram later via /start."
+                        : $"✅ Account created for `{email}` — they'll link it when they start the bot.",
                 ParseMode.Markdown, replyMarkup: MenuService.AdminMenu(),
                 cancellationToken: cancellationToken);
 
