@@ -1411,16 +1411,69 @@ public class TelegramHandlersTests
         await handler.HandleUpdateAsync(bot, TextUpdate("renamed@example.com"), CancellationToken.None);
 
         var confirm = bot.Requests.Last(r => r.MethodName == "sendMessage");
-        Assert.Contains("admin:confirm:change-email:user@example.com:renamed@example.com", confirm.Body);
+        Assert.Contains("renamed@example.com", confirm.Body);
+        Assert.Contains($"\"callback_data\":\"{MenuService.AdminConfirmChangeEmail}\"", confirm.Body);
 
-        await handler.HandleUpdateAsync(bot,
-            CallbackUpdate($"{MenuService.AdminConfirmChangeEmail}:user@example.com:renamed@example.com"),
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminConfirmChangeEmail),
             CancellationToken.None);
 
         var updateRequest = Assert.Single(requests,
             r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.StartsWith(
                 "/admin/panel/api/clients/update/", StringComparison.Ordinal));
         Assert.Equal("renamed@example.com", (await ReadJson(updateRequest)).GetProperty("email").GetString());
+
+        var done = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Changed", done.Body);
+    }
+
+    [Fact]
+    public async Task AdminChangeEmail_LongAddresses_KeepsConfirmCallbackUnderTelegramLimit()
+    {
+        const string oldEmail = "alexandra.montgomery@example.com";
+        const string newEmail = "alexandra.montgomery.junior@example.com";
+        var requests = new List<HttpRequestMessage>();
+        var account = ActiveClient() with { Email = oldEmail };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            requests.Add(request);
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == $"/admin/panel/api/clients/get/{oldEmail}")
+                return Json(ClientByEmailJson(account));
+
+            if (path == $"/admin/panel/api/clients/get/{newEmail}")
+                return Json(FailureJson("not found"));
+
+            if (path == $"/admin/panel/api/clients/update/{oldEmail}")
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminChangeEmail), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate(oldEmail), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate(newEmail), CancellationToken.None);
+
+        var confirm = bot.Requests.Last(r => r.MethodName == "sendMessage");
+        using var doc = JsonDocument.Parse(confirm.Body);
+        var callbackData = doc.RootElement
+            .GetProperty("reply_markup")
+            .GetProperty("inline_keyboard")[0][0]
+            .GetProperty("callback_data")
+            .GetString();
+
+        Assert.Equal(MenuService.AdminConfirmChangeEmail, callbackData);
+        Assert.True(Encoding.UTF8.GetByteCount(callbackData!) <= 64,
+            $"callback_data must fit Telegram's 64-byte limit, was {Encoding.UTF8.GetByteCount(callbackData!)}");
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminConfirmChangeEmail),
+            CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests,
+            r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.StartsWith(
+                "/admin/panel/api/clients/update/", StringComparison.Ordinal));
+        Assert.Equal(newEmail, (await ReadJson(updateRequest)).GetProperty("email").GetString());
 
         var done = bot.Requests.Last(r => r.MethodName == "editMessageText");
         Assert.Contains("Changed", done.Body);
@@ -1442,8 +1495,7 @@ public class TelegramHandlersTests
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminChangeEmail), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate("taken@example.com"), CancellationToken.None);
         await handler.HandleUpdateAsync(bot, TextUpdate("taken@example.com"), CancellationToken.None);
-        await handler.HandleUpdateAsync(bot,
-            CallbackUpdate($"{MenuService.AdminConfirmChangeEmail}:taken@example.com:taken@example.com"),
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminConfirmChangeEmail),
             CancellationToken.None);
 
         var done = bot.Requests.Last(r => r.MethodName == "editMessageText");

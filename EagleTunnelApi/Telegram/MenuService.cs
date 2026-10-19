@@ -122,11 +122,15 @@ public static class MenuService
         ]);
     }
 
-    public static InlineKeyboardMarkup AdminConfirmMenu(string action, string target)
+    public static InlineKeyboardMarkup AdminConfirmMenu(string action, string? target = null)
     {
+        // Emails are kept in the session for multi-value actions (e.g. change
+        // email) because Telegram caps callback_data at 64 bytes.
+        var confirmData = string.IsNullOrEmpty(target) ? action : $"{action}:{target}";
+
         return new InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton.WithCallbackData("✅ Confirm", $"{action}:{target}")],
+            [InlineKeyboardButton.WithCallbackData("✅ Confirm", confirmData)],
             [InlineKeyboardButton.WithCallbackData("❌ Cancel", AdminCancel)]
         ]);
     }
