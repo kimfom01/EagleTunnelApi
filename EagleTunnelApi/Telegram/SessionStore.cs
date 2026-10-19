@@ -42,6 +42,15 @@ public sealed class UserSession
 
     public string? AdminTargetEmail { get; set; }
 
+    /// <summary>
+    /// Pending admin email rename. Both addresses live in the session so the
+    /// confirmation button's callback data stays within Telegram's 64-byte limit.
+    /// </summary>
+    public string? AdminChangeEmailFrom { get; set; }
+
+    /// <inheritdoc cref="AdminChangeEmailFrom"/>
+    public string? AdminChangeEmailTo { get; set; }
+
     public long? AdminReferrerTgId { get; set; }
 
     public string? AdminReferrerEmail { get; set; }

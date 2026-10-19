@@ -1397,6 +1397,8 @@ public sealed class TelegramHandlers : IUpdateHandler
         var session = _sessionStore.Get(telegramId);
         session.AdminAction = AdminAction.None;
         session.AdminTargetEmail = null;
+        session.AdminChangeEmailFrom = null;
+        session.AdminChangeEmailTo = null;
         session.AdminReferrerTgId = null;
         session.AdminReferrerEmail = null;
 
@@ -1412,6 +1414,8 @@ public sealed class TelegramHandlers : IUpdateHandler
         var session = _sessionStore.Get(telegramId);
         session.AdminAction = AdminAction.None;
         session.AdminTargetEmail = null;
+        session.AdminChangeEmailFrom = null;
+        session.AdminChangeEmailTo = null;
         session.AdminReferrerTgId = null;
         session.AdminReferrerEmail = null;
 
@@ -1434,6 +1438,16 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         session.AdminCandidates = null;
         session.AdminCandidatesAction = AdminAction.None;
+
+        // A pending rename belongs only to the confirmation prompt that produced
+        // it. Keep it for the change-email confirm, drop it for every other action.
+        var isChangeEmailConfirm = data.Equals(MenuService.AdminConfirmChangeEmail, StringComparison.Ordinal)
+            || data.StartsWith(MenuService.AdminConfirmChangeEmail + ":", StringComparison.Ordinal);
+        if (!isChangeEmailConfirm)
+        {
+            session.AdminChangeEmailFrom = null;
+            session.AdminChangeEmailTo = null;
+        }
 
         switch (data)
         {
@@ -1574,7 +1588,8 @@ public sealed class TelegramHandlers : IUpdateHandler
         if (data.StartsWith(MenuService.AdminConfirmNudge + ":", StringComparison.Ordinal))
             await ExecuteAdminNudge(botClient, telegramId, messageId, data, cancellationToken);
 
-        if (data.StartsWith(MenuService.AdminConfirmChangeEmail + ":", StringComparison.Ordinal))
+        if (data.StartsWith(MenuService.AdminConfirmChangeEmail + ":", StringComparison.Ordinal) ||
+            data.Equals(MenuService.AdminConfirmChangeEmail, StringComparison.Ordinal))
             await ExecuteAdminChangeEmail(botClient, telegramId, messageId, data, cancellationToken);
     }
 
@@ -1880,10 +1895,11 @@ public sealed class TelegramHandlers : IUpdateHandler
 
                 session.AdminAction = AdminAction.None;
                 session.AdminTargetEmail = null;
+                session.AdminChangeEmailFrom = changeTarget;
+                session.AdminChangeEmailTo = newAddress;
                 await botClient.SendMessage(telegramId,
                     $"➡️ Change `{changeTarget}` to `{newAddress}`?", ParseMode.Markdown,
-                    replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmChangeEmail,
-                        $"{changeTarget}:{newAddress}"),
+                    replyMarkup: MenuService.AdminConfirmMenu(MenuService.AdminConfirmChangeEmail),
                     cancellationToken: cancellationToken);
                 return;
         }
@@ -2592,7 +2608,31 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task ExecuteAdminChangeEmail(ITelegramBotClient botClient, long telegramId, int messageId,
         string data, CancellationToken cancellationToken)
     {
-        var (target, payload) = ParseAdminConfirmTarget(data, MenuService.AdminConfirmChangeEmail);
+        var session = _sessionStore.Get(telegramId);
+
+        // New confirmations carry no addresses in the callback (Telegram's
+        // 64-byte limit); fall back to legacy callback data for in-flight prompts.
+        var hasLegacyPayload = data.StartsWith(MenuService.AdminConfirmChangeEmail + ":",
+            StringComparison.Ordinal);
+        var (legacyTarget, legacyPayload) = hasLegacyPayload
+            ? ParseAdminConfirmTarget(data, MenuService.AdminConfirmChangeEmail)
+            : (null, null);
+
+        var target = hasLegacyPayload ? legacyTarget : session.AdminChangeEmailFrom;
+        var payload = hasLegacyPayload ? legacyPayload : session.AdminChangeEmailTo;
+
+        session.AdminAction = AdminAction.None;
+        session.AdminTargetEmail = null;
+        session.AdminChangeEmailFrom = null;
+        session.AdminChangeEmailTo = null;
+
+        if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(payload))
+        {
+            await botClient.EditMessageText(telegramId, messageId,
+                "⚠️ That change expired — please start again from the admin menu.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+            return;
+        }
 
         try
         {
