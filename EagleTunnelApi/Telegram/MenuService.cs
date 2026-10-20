@@ -97,18 +97,26 @@ public static class MenuService
     {
         return new InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton.WithCallbackData("🔍 Look Up User", AdminLookup)],
-            [InlineKeyboardButton.WithCallbackData("📜 List All Clients", AdminList)],
-            [InlineKeyboardButton.WithCallbackData("➕ Grant / Extend", AdminGrant)],
+            [
+                InlineKeyboardButton.WithCallbackData("🔍 Look Up User", AdminLookup),
+                InlineKeyboardButton.WithCallbackData("📜 List All Clients", AdminList)
+            ],
+            [
+                InlineKeyboardButton.WithCallbackData("➕ Grant / Extend", AdminGrant),
+                InlineKeyboardButton.WithCallbackData("➕ Register Account", AdminRegister)
+            ],
             [
                 InlineKeyboardButton.WithCallbackData("🚫 Ban", AdminBan),
                 InlineKeyboardButton.WithCallbackData("✅ Unban", AdminUnban)
             ],
-            [InlineKeyboardButton.WithCallbackData("📱 Device Limit", AdminLimit)],
-            [InlineKeyboardButton.WithCallbackData("♻️ Reset Traffic", AdminReset)],
-            [InlineKeyboardButton.WithCallbackData("🔗 Link Account", AdminLink)],
-            [InlineKeyboardButton.WithCallbackData("➕ Register Account", AdminRegister)],
-            [InlineKeyboardButton.WithCallbackData("✏️ Change Email", AdminChangeEmail)],
+            [
+                InlineKeyboardButton.WithCallbackData("📱 Device Limit", AdminLimit),
+                InlineKeyboardButton.WithCallbackData("♻️ Reset Traffic", AdminReset)
+            ],
+            [
+                InlineKeyboardButton.WithCallbackData("🔗 Link Account", AdminLink),
+                InlineKeyboardButton.WithCallbackData("✏️ Change Email", AdminChangeEmail)
+            ],
             [InlineKeyboardButton.WithCallbackData("📨 Send Reminder", AdminNudge)],
             [InlineKeyboardButton.WithCallbackData("❌ Exit Admin", AdminExit)]
         ]);
