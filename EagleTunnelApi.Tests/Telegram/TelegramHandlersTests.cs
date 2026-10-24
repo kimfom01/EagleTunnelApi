@@ -359,7 +359,7 @@ public class TelegramHandlersTests
             TgId = 0,
             Enable = true,
             ExpiryTime = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds(),
-            Comment = "Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com"
+            Comment = "Referrer tgId: 777 · Referred by: friend@example.com"
         };
         var claimed = invited with { TgId = TelegramId };
 
@@ -685,6 +685,26 @@ public class TelegramHandlersTests
     }
 
     [Fact]
+    public async Task ReferrerCommand_RefusedWhenTrialTaggedButPaid()
+    {
+        // Paid directly to the admin (dashboard extension) leaves the trial tag, but
+        // the account has paid — referrals must be locked like any other paid account.
+        var trialEnds = DateTimeOffset.UtcNow.AddDays(-1);
+        var paid = ActiveClient() with
+        {
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeMilliseconds(),
+            Comment = ReferralService.WithTrialTag("comment", trialEnds)
+        };
+
+        var (handler, bot) = CreateHandler(_ => Json(ClientListJson(paid)));
+
+        await handler.HandleUpdateAsync(bot, TextUpdate("/referrer"), CancellationToken.None);
+
+        var send = Assert.Single(bot.Requests, r => r.MethodName == "sendMessage");
+        Assert.Contains("new subscribers", send.Body);
+    }
+
+    [Fact]
     public async Task ReferrerCommand_UpdatesAttributionWhenUnprovisioned()
     {
         var requests = new List<HttpRequestMessage>();
@@ -926,13 +946,15 @@ public class TelegramHandlersTests
     {
         var requests = new List<HttpRequestMessage>();
         var getCount = 0;
+        var expiredTrialEnds = DateTimeOffset.UtcNow.AddHours(-1);
         var expiredInvite = ActiveClient() with
         {
             Email = "newbie@example.com",
             TgId = 0,
             Enable = true,
-            ExpiryTime = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds(),
-            Comment = "Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com · Trial until 2000-01-01 00:00 UTC"
+            ExpiryTime = expiredTrialEnds.ToUnixTimeMilliseconds(),
+            Comment = "Referrer tgId: 777 · Referred by: friend@example.com · " +
+                      ReferralService.WithTrialTag(null, expiredTrialEnds)
         };
         var claimed = expiredInvite with { TgId = TelegramId };
 
@@ -1015,7 +1037,7 @@ public class TelegramHandlersTests
             TgId = 0,
             Enable = false,
             ExpiryTime = DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds(),
-            Comment = "Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com"
+            Comment = "Referrer tgId: 777 · Referred by: friend@example.com"
         };
         var claimed = invited with { TgId = TelegramId };
 
@@ -1726,7 +1748,7 @@ public class TelegramHandlersTests
             TgId = 0,
             Enable = true,
             ExpiryTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
-            Comment = "Invited by friend@example.com · Referrer tgId: 777 · Referred by: friend@example.com · Trial until 2099-01-01 00:00 UTC"
+            Comment = "Referrer tgId: 777 · Referred by: friend@example.com · Trial until 2099-01-01 00:00 UTC"
         };
         var claimed = invited with { TgId = TelegramId };
 
@@ -2310,6 +2332,101 @@ public class TelegramHandlersTests
         var edit = Assert.Single(bot.Requests,
             r => r.MethodName == "editMessageText" && r.Body.Contains("Granted"));
         Assert.Contains("30", edit.Body);
+    }
+
+    [Fact]
+    public async Task AdminGrant_ReportsReferralBonusWhenSettled()
+    {
+        var trialEnds = DateTimeOffset.UtcNow.AddHours(2);
+        var referee = ActiveClient() with
+        {
+            Email = "newbie@example.com",
+            TgId = 111,
+            Enable = true,
+            ExpiryTime = trialEnds.ToUnixTimeMilliseconds(),
+            Comment = "Telegram ID: 111 · Referrer tgId: 777 · Referred by: friend@example.com · " +
+                      ReferralService.WithTrialTag(null, trialEnds)
+        };
+        var referrer = ReferrerAccount();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(ClientByEmailJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/tgId/111") return Json(ClientListJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/tgId/777") return Json(ClientListJson(referrer));
+
+            if (path == "/admin/panel/api/clients/get/friend@example.com")
+                return Json(ClientByEmailJson(referrer));
+
+            if (path.StartsWith("/admin/panel/api/clients/update/", StringComparison.Ordinal))
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminGrant), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("30"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminConfirmGrant}:newbie@example.com:30"), CancellationToken.None);
+
+        var edit = Assert.Single(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains("Granted"));
+
+        Assert.Contains("Granted", edit.Body);
+        Assert.Contains("Referral bonus paid", edit.Body);
+    }
+
+    [Fact]
+    public async Task AdminSettle_RunsSweepAndReportsCount()
+    {
+        var referee = ActiveClient() with
+        {
+            Email = "newbie@example.com",
+            TgId = 111,
+            Comment = "Telegram ID: 111 · Referrer tgId: 777 · Referred by: friend@example.com"
+        };
+        var referrer = ReferrerAccount();
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/list")
+                return Json(JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok",
+                    new List<PanelClientSummary>
+                    {
+                        new(1, "newbie@example.com", "sub1", "uuid-1", 100, referee.ExpiryTime, true,
+                            new List<int> { 1 }, null)
+                    })));
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(ClientByEmailJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/tgId/111") return Json(ClientListJson(referee));
+
+            if (path == "/admin/panel/api/clients/get/tgId/777") return Json(ClientListJson(referrer));
+
+            if (path == "/admin/panel/api/clients/get/friend@example.com")
+                return Json(ClientByEmailJson(referrer));
+
+            if (path.StartsWith("/admin/panel/api/clients/update/", StringComparison.Ordinal))
+                return Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminSettle), CancellationToken.None);
+
+        var edits = bot.Requests.Where(r => r.MethodName == "editMessageText").ToList();
+
+        Assert.Contains(edits, r => r.Body.Contains("Scanning"));
+        Assert.Contains(edits, r => r.Body.Contains("Settled"));
     }
 
     [Fact]

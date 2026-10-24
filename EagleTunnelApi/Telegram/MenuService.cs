@@ -26,6 +26,7 @@ public static class MenuService
     public const string AdminReset = "admin:reset";
     public const string AdminLink = "admin:link";
     public const string AdminNudge = "admin:nudge";
+    public const string AdminSettle = "admin:settle";
     public const string AdminRegister = "admin:register";
     public const string AdminChangeEmail = "admin:change-email";
     public const string AdminExit = "admin:exit";
@@ -117,7 +118,8 @@ public static class MenuService
                 InlineKeyboardButton.WithCallbackData("🔗 Link Account", AdminLink),
                 InlineKeyboardButton.WithCallbackData("✏️ Change Email", AdminChangeEmail)
             ],
-            [InlineKeyboardButton.WithCallbackData("📨 Send Reminder", AdminNudge)],
+            [InlineKeyboardButton.WithCallbackData("📨 Send Reminder", AdminNudge),
+             InlineKeyboardButton.WithCallbackData("🛠 Settle Referrals", AdminSettle)],
             [InlineKeyboardButton.WithCallbackData("❌ Exit Admin", AdminExit)]
         ]);
     }
