@@ -204,10 +204,13 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 - **Bonus:** When a referred friend pays for the first time, the referrer gets
   `Telegram:ReferralBonusDays` (default `30`) added to their VPN expiry. The payout fires on the first paid
   activation however it happens — Tribute `new_subscription` webhook, manual `/admin` grant (e.g. direct payment
-  to support), or the daily settlement sweep for extensions made directly in the 3X-UI dashboard. The bonus is
+  to support), or the settlement sweep for extensions made directly in the 3X-UI dashboard. Direct/dashboard
+  activations that still carry the trial tag are detected as paid from the expiry date. `/admin` →
+  `🛠 Settle Referrals` runs the sweep on demand (manual grants report the payout in the confirmation). The bonus is
   recorded as `Referral credit:` in the referrer's panel comment and re-applied on every renewal so rebills never
-  absorb it. Referrers are advised to cancel their Tribute renewal to enjoy the free month; support provides a
-  step-by-step cancellation video on request.
+  absorb it. Once the credited days have been used up (the account lapsed), the tag is cleared rather than re-added,
+  so a later resubscribe never pays the same bonus twice. Referrers are advised to cancel their Tribute renewal to
+  enjoy the free month; support provides a step-by-step cancellation video on request.
 - **Eligibility:** Referrals only count for genuinely new subscribers. A referrer can only be attached to accounts that
   never had paid access, each referral pays out exactly once, and self-referrals are blocked.
 - **Email lockdown:** Once an account is active, its login email can only be changed by support/admins (`/admin` →
@@ -216,7 +219,8 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
   accounts match, so the exact address, case and all, is never required.
 - **Expiry reminders:** A daily background job (at `Telegram:ReminderHourUtc`) messages cancelled, email-migrated
   accounts 3, 2, 1, and 0 days before expiry with a resubscribe link; `/admin` → `📨 Send Reminder` fires the same
-  reminder instantly for any linked account. `/admin` lookup shows referral, credit, and cancellation state per account.
+  reminder instantly for any linked account, and manual grants clear the cancelled/reminder markers just like a
+  Tribute renewal. `/admin` lookup shows referral, credit, and cancellation state per account.
 - This flow is interim until a credits-based payment platform replaces Tribute; the referral ledger maps 1:1 onto future
   credit balances. Full detail lives in [REFERRAL_PLAN.md](REFERRAL_PLAN.md).
 
@@ -224,7 +228,8 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 
 Unit tests live in the `EagleTunnelApi.Tests` project (xUnit). They cover webhook signature verification, subscription
 event handling (fetch / update / auto-create / idempotent fallback / error surfacing), referral bonus payout
-(first-payment grant, manual-grant grant, settlement sweep, idempotency, no-chaining, gift/self-referral blocks,
+(first-payment grant, manual-grant grant, settlement sweep, on-demand settlement, trial-aware paid detection,
+idempotency, no-chaining, gift/self-referral blocks,
 pending referrals, trial referees, trial-tag stripping),
 trial registration, friend pre-registration and claim, admin register/change-email, partial-email pick lists, nudge flow,
 cancellation tagging, expiry reminders, subscription status derivation, and the Telegram bot flows including the

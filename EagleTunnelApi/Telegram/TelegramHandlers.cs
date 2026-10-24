@@ -150,7 +150,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (ReferralService.IsLegacyEmail(userDetails.Username))
         {
-            if (userDetails.HasEverBeenProvisioned())
+            if (userDetails.HasConvertedToPaid())
             {
                 _logger.LogInformation(
                     "Provisioned legacy account keeps its login, no migration. TelegramId: {TelegramId}",
@@ -517,7 +517,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         var client = response.Client;
 
-        if (ReferralService.HasEverBeenProvisioned(client))
+        if (ReferralService.HasConvertedToPaid(client))
         {
             await botClient.SendMessage(telegramId,
                 "🔒 Referrals only count for new subscribers, so your referrer can't be changed anymore.\n\n" +
@@ -698,7 +698,7 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task MigrateClientEmailAsync(PanelClient client, string email, long? referrerTgId,
         string? referrerEmail, CancellationToken cancellationToken)
     {
-        if (ReferralService.HasEverBeenProvisioned(client))
+        if (ReferralService.HasConvertedToPaid(client))
         {
             await _panelClient.UpdateClientAsync(client.Email,
                 client.ToUpdateRequest() with { Email = email }, cancellationToken);
@@ -870,7 +870,7 @@ public sealed class TelegramHandlers : IUpdateHandler
                 telegramId);
 
             await StartEmailRegistration(botClient, telegramId, null,
-                !userDetails.HasEverBeenProvisioned(), true, cancellationToken,
+                !userDetails.HasConvertedToPaid(), true, cancellationToken,
                 "🎁 To share your invite link, set your login email address below.\n" +
                 "This is a one-time update — afterwards the link is yours to share.\n\n");
 
@@ -991,7 +991,7 @@ public sealed class TelegramHandlers : IUpdateHandler
             _sessionStore.Get(telegramId).FriendInviteActive = false;
 
             await StartEmailRegistration(botClient, telegramId, null,
-                !ReferralService.HasEverBeenProvisioned(own.Client), true, cancellationToken,
+                !ReferralService.HasConvertedToPaid(own.Client), true, cancellationToken,
                 "🎁 To share your invite link, set your login email address below.\n" +
                 "This is a one-time update — afterwards the link is yours to share.\n\n");
 
@@ -1085,8 +1085,11 @@ public sealed class TelegramHandlers : IUpdateHandler
         // They link their Telegram later by starting the bot and entering this
         // email, then pay to keep access after the trial.
         var (inviteEnable, inviteExpiryMs, inviteTrialEnds) = NewAccountState();
+        // `Referrer tgId` is the fast path; `Referred by` is the email fallback for
+        // unclaimed rows. Both are parsed by the settlement code — no separate
+        // "Invited by" tag is needed since the inviter is always the referrer.
         var comment =
-            $"Invited by {inviterEmail} · Referrer tgId: {telegramId} · Referred by: {inviterEmail}";
+            $"Referrer tgId: {telegramId} · Referred by: {inviterEmail}";
 
         if (inviteTrialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, inviteTrialEnds.Value);
 
@@ -1245,7 +1248,10 @@ public sealed class TelegramHandlers : IUpdateHandler
         {
             // Already-paid accounts can never earn a referral bonus (new-subscribers
             // only), so void any carried attribution instead of letting it linger
-            // as a payable tag for the settlement sweep.
+            // as a payable tag for the settlement sweep. Deliberately NOT
+            // HasConvertedToPaid: a friend who pays before claiming (direct
+            // payment/dashboard extension) must keep the attribution so the
+            // settlement can still pay their referrer.
             comment = ReferralService.ClearReferralAttribution(comment);
 
             _logger.LogInformation("Voided referral attribution on claim of provisioned account. Email: {Email}",
@@ -1257,11 +1263,11 @@ public sealed class TelegramHandlers : IUpdateHandler
         // one at claim time. Rows that already carry a trial keep it — unless it
         // already expired before the friend claimed, in which case restart it so
         // a late claimer still gets the promised trial window.
-        var startTrial = !ReferralService.HasEverBeenProvisioned(invited)
+        var startTrial = !ReferralService.HasConvertedToPaid(invited)
             && !ReferralService.HasTrialTag(invited.Comment)
             && !invited.Enable;
 
-        var restartExpiredTrial = !ReferralService.HasEverBeenProvisioned(invited)
+        var restartExpiredTrial = !ReferralService.HasConvertedToPaid(invited)
             && ReferralService.HasTrialTag(invited.Comment)
             && invited.ExpiryTime <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             && _telegramOptions.TrialDurationHours > 0;
@@ -1318,7 +1324,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         var hasReferrer = ReferralService.TryParseReferredBy(invited.Comment, out _, out _);
 
-        if (!hasReferrer && !ReferralService.HasEverBeenProvisioned(invited))
+        if (!hasReferrer && !ReferralService.HasConvertedToPaid(invited))
         {
             session.RegistrationStep = RegistrationStep.AwaitingReferrer;
             session.CollectReferrer = true;
@@ -1364,7 +1370,7 @@ public sealed class TelegramHandlers : IUpdateHandler
             || legacy.TgId != telegramId
             || !ReferralService.IsLegacyEmail(legacy.Email)
             || legacy.Email.Equals(claimedEmail, StringComparison.OrdinalIgnoreCase)
-            || ReferralService.HasEverBeenProvisioned(legacy))
+            || ReferralService.HasConvertedToPaid(legacy))
             return;
 
         var tombstone = $"{legacy.Email}.merged-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
@@ -1517,6 +1523,10 @@ public sealed class TelegramHandlers : IUpdateHandler
                 await botClient.EditMessageText(telegramId, messageId,
                     "📨 Enter the account's **email or Telegram ID** to nudge:", ParseMode.Markdown,
                     MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+                return;
+
+            case MenuService.AdminSettle:
+                await ExecuteAdminSettleAsync(botClient, telegramId, messageId, cancellationToken);
                 return;
 
             case MenuService.AdminRegister:
@@ -2300,10 +2310,14 @@ public sealed class TelegramHandlers : IUpdateHandler
         try
         {
             var days = int.Parse(payload);
-            await _adminPanelService.GrantAsync(target, days, cancellationToken);
+            var bonusPaid = await _adminPanelService.GrantAsync(target, days, cancellationToken);
+
+            var bonusLine = bonusPaid
+                ? $"\n\n🎁 Referral bonus paid: **+{_telegramOptions.ReferralBonusDays} days** to the referrer."
+                : "";
 
             await botClient.EditMessageText(telegramId, messageId,
-                $"✅ Granted **{days}** days to `{target}`.",
+                $"✅ Granted **{days}** days to `{target}`." + bonusLine,
                 ParseMode.Markdown, MenuService.AdminMenu(),
                 cancellationToken: cancellationToken);
         }
@@ -2311,6 +2325,32 @@ public sealed class TelegramHandlers : IUpdateHandler
         {
             _logger.LogError(ex, "Grant failed. Target: {Target}", target);
             await botClient.EditMessageText(telegramId, messageId, "❌ Grant failed. Please try again.",
+                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task ExecuteAdminSettleAsync(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        await botClient.EditMessageText(telegramId, messageId,
+            "⏳ Scanning clients for pending referral bonuses…",
+            replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+
+        try
+        {
+            var settled = await _adminPanelService.SettlePendingReferralBonusesAsync(cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                settled == 0
+                    ? "✅ No pending referral bonuses found."
+                    : $"✅ Settled **{settled}** referral bonus{(settled == 1 ? "" : "es")}.",
+                ParseMode.Markdown, MenuService.AdminMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Referral settlement run failed. Admin: {TelegramId}", telegramId);
+            await botClient.EditMessageText(telegramId, messageId,
+                "❌ Settlement failed — check the logs and try again.",
                 replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
         }
     }

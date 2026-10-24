@@ -14,7 +14,11 @@ public interface IAdminPanelService
 
     Task<IReadOnlyList<PanelClientSummary>> ListClientsAsync(CancellationToken cancellationToken);
 
-    Task GrantAsync(string email, int days, CancellationToken cancellationToken);
+    /// <summary>
+    /// Extends access and, when this is the referee's first paid activation,
+    /// pays the referrer's bonus. Returns true when a bonus was paid.
+    /// </summary>
+    Task<bool> GrantAsync(string email, int days, CancellationToken cancellationToken);
 
     Task BanAsync(string email, CancellationToken cancellationToken);
 
@@ -38,10 +42,11 @@ public interface IAdminPanelService
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Settles the referral bonus for an admin-created account that was granted
-    /// paid days immediately (TgId is still 0/unclaimed). Only pays when the
-    /// new account is already provisioned (granted, non-trial) with referral
-    /// attribution. Returns true when a bonus was granted.
+    /// Settles the referral bonus for an unclaimed account (TgId is 0), whether it
+    /// was granted paid days by the admin or extended directly in the 3X-UI
+    /// dashboard. Only pays when the account has actually converted to paid access
+    /// (never-paid trials stay pending) and carries unpaid referral attribution.
+    /// Returns true when a bonus was granted.
     /// </summary>
     Task<bool> TrySettleReferralBonusForEmailAsync(string refereeEmail, CancellationToken cancellationToken);
 
@@ -77,7 +82,7 @@ public class AdminPanelService(
         return clients.OrderBy(c => c.Email).ToList();
     }
 
-    public async Task GrantAsync(string email, int days, CancellationToken cancellationToken)
+    public async Task<bool> GrantAsync(string email, int days, CancellationToken cancellationToken)
     {
         var before = await RequireClient(email, cancellationToken);
 
@@ -85,14 +90,22 @@ public class AdminPanelService(
 
         // A manual grant is a paid activation like any other: a referred first-time
         // payer earns their referrer the bonus even without a Tribute webhook.
-        await TrySettleReferralBonusAsync(before.TgId, before, cancellationToken);
+        // Pre-registered friends can pay before ever claiming their account, so a
+        // missing Telegram ID must settle by email rather than silently skip.
+        return before.TgId > 0
+            ? await TrySettleReferralBonusAsync(before.TgId, before, cancellationToken)
+            : await TrySettleReferralBonusForEmailAsync(before.Email, cancellationToken);
     }
 
     /// <summary>
     /// Extends access without settling referrals. Used for the referrer payout
-    /// itself so bonuses never chain up the referral graph.
+    /// itself so bonuses never chain up the referral graph. <paramref name="clearWinBack"/>
+    /// is false for payouts: a referrer who cancelled Tribute must keep their
+    /// <c>Cancelled</c> tag so the expiry reminders still bring them back when
+    /// the free month ends.
     /// </summary>
-    private async Task GrantCoreAsync(PanelClient client, int days, CancellationToken cancellationToken)
+    private async Task GrantCoreAsync(PanelClient client, int days, CancellationToken cancellationToken,
+        bool clearWinBack = true)
     {
         var nowUtc = DateTimeOffset.UtcNow;
         var currentExpiry = client.ExpiryTime > 0
@@ -105,9 +118,20 @@ public class AdminPanelService(
 
         var newExpiryMs = baseDate.AddDays(days).ToUnixTimeMilliseconds();
 
-        var comment = ReferralService.HasTrialTag(client.Comment)
-            ? ReferralService.ClearTrialTag(client.Comment)
-            : client.Comment;
+        // A direct payment resumes paid access exactly like a Tribute activation:
+        // clear the cancelled tag and reminder markers so win-back DMs stop. The
+        // trial tag always goes (the account is paid either way).
+        var comment = clearWinBack
+            ? ReferralService.ClearActivationComment(client.Comment)
+            : ReferralService.HasTrialTag(client.Comment)
+                ? ReferralService.ClearTrialTag(client.Comment)
+                : client.Comment;
+
+        // Credit already baked into an expiry that has passed is spent. Drop the
+        // stale ledger so a fresh grant can't carry consumed bonus days forward
+        // (and so a payout to a lapsed referrer doesn't accidentally tally the old
+        // bonus with the new one).
+        if (currentExpiry <= nowUtc) comment = ReferralService.ClearCredit(comment);
 
         await panelClient.UpdateClientAsync(client.ToUpdateRequest() with
         {
@@ -219,9 +243,11 @@ public class AdminPanelService(
         if (referee is null) return false;
         if (ReferralService.HasBonusPaidMarker(referee.Comment)) return false;
 
-        // Immediate admin grants create provisioned (enabled, non-trial) accounts.
-        // Trial/disabled creates stay pending until the referee links and subscribes.
-        if (!ReferralService.HasEverBeenProvisioned(referee)) return false;
+        // Immediate admin grants create paid (enabled, non-trial) accounts, while
+        // direct payments in the 3X-UI dashboard leave a trial tag on a row whose
+        // expiry was pushed past the trial window. Both count as paid here; a
+        // genuine, still-running trial stays pending.
+        if (!ReferralService.HasConvertedToPaid(referee)) return false;
 
         if (!ReferralService.TryParseReferredBy(referee.Comment, out var referrerEmail, out _))
             return false;
@@ -255,7 +281,7 @@ public class AdminPanelService(
 
         try
         {
-            await GrantCoreAsync(referrer, bonusDays, cancellationToken);
+            await GrantCoreAsync(referrer, bonusDays, cancellationToken, clearWinBack: false);
         }
         catch (Exception ex)
         {
@@ -306,7 +332,7 @@ public class AdminPanelService(
                 continue;
             }
 
-            if (client is null || client.TgId <= 0) continue;
+            if (client is null) continue;
 
             if (!ReferralService.TryParseReferredBy(client.Comment, out _, out _)) continue;
 
@@ -314,14 +340,19 @@ public class AdminPanelService(
 
             // Only accounts that converted to paid access without a payout qualify.
             // Never-provisioned accounts are settled by their activation path instead.
-            if (!ReferralService.HasEverBeenProvisioned(client)) continue;
+            // Trial tags left by a dashboard/direct extension count as paid here.
+            if (!ReferralService.HasConvertedToPaid(client)) continue;
 
             try
             {
                 // The pre-activation snapshot is unavailable here; the filters above
                 // (attributed + paid + unpaid) stand in for the first-activation check.
-                if (await SettleCoreAsync(client.TgId, client, requireFirstActivation: false, cancellationToken))
-                    settled++;
+                // Unclaimed pre-registrations (TgId = 0) are still payable by email.
+                var paid = client.TgId > 0
+                    ? await SettleCoreAsync(client.TgId, client, requireFirstActivation: false,
+                        cancellationToken)
+                    : await TrySettleReferralBonusForEmailAsync(client.Email, cancellationToken);
+                if (paid) settled++;
             }
             catch (Exception ex)
             {
@@ -378,7 +409,7 @@ public class AdminPanelService(
 
         try
         {
-            await GrantCoreAsync(referrer, bonusDays, cancellationToken);
+            await GrantCoreAsync(referrer, bonusDays, cancellationToken, clearWinBack: false);
         }
         catch (Exception ex)
         {

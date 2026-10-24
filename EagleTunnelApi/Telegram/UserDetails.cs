@@ -54,8 +54,8 @@ public sealed record UserDetails(
         );
     }
 
-    public bool HasEverBeenProvisioned()
+    public bool HasConvertedToPaid()
     {
-        return ReferralService.HasEverBeenProvisioned(Enable, ExpiryTimeMs, Comment);
+        return ReferralService.HasConvertedToPaid(Enable, ExpiryTimeMs, Comment);
     }
 }

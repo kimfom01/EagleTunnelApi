@@ -235,6 +235,39 @@ public class TributeEventsHandlerTests
     }
 
     [Fact]
+    public async Task HandleRenewedSubscription_ConsumedCredit_IsNotReAdded()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var client = SampleClient() with
+        {
+            Enable = false,
+            ExpiryTime = DateTimeOffset.UtcNow.AddDays(-2).ToUnixTimeMilliseconds(),
+            Comment = "Telegram ID: 12345 · Referral credit: 30d"
+        };
+
+        var (handler, _) = CreateHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/get/tgId/{TelegramId}")
+                return StubHttpMessageHandler.Json(ClientListJson(client));
+
+            if (request.RequestUri!.AbsolutePath == $"/admin/panel/api/clients/update/{client.Email}")
+                return StubHttpMessageHandler.Json(SuccessJson());
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, requests);
+
+        await handler.HandleRenewedSubscription(RenewedSubscriptionEvent(), CancellationToken.None);
+
+        var updateRequest = Assert.Single(requests, r => r.Method == HttpMethod.Post);
+        var body = await ReadBodyJson(updateRequest);
+
+        // The bonus was already consumed with the old expiry: the new expiry is
+        // just Tribute's date, and the spent ledger tag is cleared.
+        Assert.Equal(ExpectedExpiryMs, body.GetProperty("expiryTime").GetInt64());
+        Assert.DoesNotContain("Referral credit:", body.GetProperty("comment").GetString()!);
+    }
+
+    [Fact]
     public async Task HandleNewSubscription_ExistingClient_UpdatesExpiry()
     {
         var requests = new List<HttpRequestMessage>();

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Mail;
 using System.Text.RegularExpressions;
 using EagleTunnelApi.PanelApi.Models;
@@ -146,6 +147,20 @@ public static partial class ReferralService
         return AppendTag(updated.TrimEnd(' ', '·'), $"{CreditTagPrefix}{total}d");
     }
 
+    /// <summary>
+    /// Removes the credit ledger once its days have been consumed. The tag records
+    /// bonus days that are already baked into the panel expiry; re-applying it
+    /// after the account lapsed would grant the same bonus a second time.
+    /// </summary>
+    public static string ClearCredit(string? comment)
+    {
+        if (string.IsNullOrEmpty(comment)) return "";
+
+        var updated = CreditRegex().Replace(comment, " ");
+        updated = Regex.Replace(updated, @"\s*·\s*·\s*", " · ");
+        return updated.Trim().Trim('·').Trim();
+    }
+
     public static string MarkCancelled(string? comment, DateOnly date)
     {
         var updated = CancelledRegex().Replace(comment ?? "", "", 1).TrimEnd(' ', '·');
@@ -201,6 +216,62 @@ public static partial class ReferralService
             !HasTrialTag(comment);
     }
 
+    /// <summary>
+    /// Whether the account has ever had paid access, treating a trial row whose
+    /// expiry was pushed past the trial window as paid. Direct payments (bank
+    /// transfer to the admin, 3X-UI dashboard edits) leave the trial tag in place,
+    /// so <see cref="HasEverBeenProvisioned"/> alone would keep calling them
+    /// "never paid". Used for payouts and for locking referral changes after
+    /// payment; the claim path intentionally stays on
+    /// <see cref="HasEverBeenProvisioned"/> so a friend who pays before claiming
+    /// keeps their attribution.
+    /// </summary>
+    public static bool HasConvertedToPaid(PanelClient client)
+    {
+        return HasConvertedToPaid(client.Enable, client.ExpiryTime, client.Comment);
+    }
+
+    public static bool HasConvertedToPaid(bool enable, long expiryTimeMs, string? comment = null)
+    {
+        // Genuine trial rows expire at the tag's own time. Anything meaningfully
+        // later was paid for; the one-hour tolerance absorbs the tag's minute
+        // precision. Unparsable tags stay unpaid (safe: the bonus stays pending).
+        if (HasTrialTag(comment) && TryGetTrialEnd(comment, out var trialEnds))
+            return enable && expiryTimeMs > trialEnds.AddHours(1).ToUnixTimeMilliseconds();
+
+        return HasEverBeenProvisioned(enable, expiryTimeMs, comment);
+    }
+
+    public static bool TryGetTrialEnd(string? comment, out DateTimeOffset trialEnds)
+    {
+        trialEnds = default;
+
+        if (string.IsNullOrEmpty(comment)) return false;
+
+        var match = TrialEndRegex().Match(comment);
+
+        return match.Success && DateTimeOffset.TryParseExact(match.Groups[1].Value, "yyyy-MM-dd HH:mm",
+            CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out trialEnds);
+    }
+
+    /// <summary>
+    /// Comment transition for any paid activation: drop win-back state (cancelled
+    /// tag, reminder markers) and the trial tag, preserving referral attribution,
+    /// the credit ledger, and the bonus-paid marker. Shared by the Tribute
+    /// provisioner and manual admin grants so both routes leave identical state.
+    /// </summary>
+    public static string? ClearActivationComment(string? comment)
+    {
+        if (comment is null) return null;
+
+        var cleared = ClearRenewalMarkers(comment);
+
+        if (HasTrialTag(cleared)) cleared = ClearTrialTag(cleared);
+
+        return cleared;
+    }
+
     public static string WithTrialTag(string? comment, DateTimeOffset trialEnds) =>
         AppendTag(comment, $"{TrialTagPrefix}{trialEnds:yyyy-MM-dd HH:mm} UTC");
 
@@ -248,6 +319,9 @@ public static partial class ReferralService
 
     [GeneratedRegex(@"\s*·?\s*Trial until [^·]*", RegexOptions.IgnoreCase)]
     private static partial Regex TrialTagRegex();
+
+    [GeneratedRegex(@"Trial until (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC", RegexOptions.IgnoreCase)]
+    private static partial Regex TrialEndRegex();
 
     [GeneratedRegex(@"^tg\d+$", RegexOptions.IgnoreCase)]
     private static partial Regex LegacyEmailRegex();

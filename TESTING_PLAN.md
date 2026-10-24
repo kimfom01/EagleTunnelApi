@@ -1,7 +1,7 @@
 # Referral System — Phone Testing Plan
 
 How to verify the whole feature from Telegram on your phone, plus the gaming/vulnerability checks.
-Unit suite is green (179 tests); this plan covers what only a live run can prove.
+Unit suite is green (211 tests); this plan covers what only a live run can prove.
 
 ## 0. Prerequisites (do once)
 
@@ -48,8 +48,10 @@ Unit suite is green (179 tests); this plan covers what only a live run can prove
 3. [ ] Expect within a minute: A's expiry **+30 days exactly**; A's comment gains `Referral credit: 30d`; B's comment gains `Referral bonus paid`; A gets a DM (`+30 days`, cancel tip, support pointer).
 4. [ ] B renews next cycle → **no second bonus** (A's expiry advances only by the paid period; credit persists and is re-applied, visible in comment).
 5. [ ] **Expired resubscribe (no rebase):** let a subscription lapse (e.g. expired 7 days), then resubscribe for 30 days → new expiry is Tribute `expires_at` + 1h grace + credit, **not** rebased onto today. Verify via `/admin` lookup or panel UI.
-6. [ ] **Manual-payment payout (free, no Tribute cost):** referred trial account F (never paid) → as admin, `/admin` → `➕ Grant / Extend` → grant F 30 days → A (referrer) gets **+30 days**, `Referral credit: 30d`, A gets the bonus DM; F's comment gains `Referral bonus paid` and loses the trial tag. Repeat the grant → **no second payout**.
-7. [ ] **Dashboard-direct payout (slow):** extend a referred, never-paid account directly in the 3X-UI panel UI → after the next daily settlement run (`Telegram:ReminderHourUtc`), A gets the bonus as in step 6.
+6. [ ] **Manual-payment payout (free, no Tribute cost):** referred trial account F (never paid) → as admin, `/admin` → `➕ Grant / Extend` → grant F 30 days → A (referrer) gets **+30 days**, `Referral credit: 30d`, A gets the bonus DM; the admin confirmation says `Referral bonus paid`; F's comment gains `Referral bonus paid`, loses the trial tag, and any `Cancelled`/`Reminder … sent` markers. Repeat the grant → **no second payout**.
+7. [ ] **Dashboard-direct payout:** extend a referred, never-paid account directly in the 3X-UI panel UI (leave the `Trial until` tag alone) → `/admin` → `🛠 Settle Referrals` → reports `1` settled and A gets the bonus as in step 6. Without the button, the same happens on the next daily run (`Telegram:ReminderHourUtc`). A genuine trial that hasn't paid is left alone.
+8. [ ] **Unclaimed pre-registration payout:** A registers G's email (`➕ Register a Friend`), G pays the admin directly, and the admin grants G days **before G ever starts the bot** (`TgId` still 0) → A still gets +30d, the credit tag, and the DM; G is marked `Referral bonus paid`. `/referrer` on a paid account (even one carrying a trial tag from a dashboard extension) is refused.
+9. [ ] **Consumed bonus is not paid twice:** let A's bonus month expire, then renew/pay again → new expiry is just the new paid period; `Referral credit:` is gone from A's comment (not re-added). Also pull A's expiry into the past with a leftover `Referral credit: 30d` and grant days from `/admin` → the stale tag is cleared, not carried into the new period.
 
 ## Track E — Cancel + reminders
 
@@ -72,11 +74,12 @@ Unit suite is green (179 tests); this plan covers what only a live run can prove
 
 ## Track H — Friend pre-registration + claim (A invites G)
 
-1. [x] A opens invite screen → `➕ Register a Friend` → enters `g@example.com` → bot confirms invite created; panel shows disabled `TgId=0` row with `Invited by <A-email>` + referrer tags and **no trial** (no `Trial until`, far-future expiry).
+1. [x] A opens invite screen → `➕ Register a Friend` → enters `g@example.com` → bot confirms invite created; panel shows disabled `TgId=0` row with `Referrer tgId` + `Referred by` tags and **no trial** (no `Trial until`, far-future expiry).
 2. [x] G starts the bot, enters `g@example.com` → account auto-linked (panel `TgId` = G's id), trial starts now (`enabled`, expiry ~2h, `Trial until …`), referrer kept, straight to menu with no referrer re-prompt.
 3. [ ] G pays → A gets the bonus.
 4. [x] A tries inviting an already-registered email → refused; invites own email → refused.
 5. [ ] Claim with a pre-existing legacy row: G started the bot before being invited (owns a dead `tg{id}` row) → after claiming, panel shows the linked account working and the old row retired as a disabled `tg{id}.merged-…` tombstone.
+6. [x] **Unclaimed payout (regression)**: A registers G by email; G pays A's admin by transfer; admin grants G days from `/admin` *before* G ever starts the bot (`TgId` still 0) → A gets +30d, credit tag, and the bonus DM; G is marked `Referral bonus paid`. Unit-covered by `Grant_UnclaimedPreRegisteredReferee_SettlesBonusByEmail`; the daily sweep covers the same row when granted in the 3X-UI dashboard (`Sweep_SettlesUnclaimedDashboardGrantedAccount`).
 
 ## Track I — Admin register + change email (as admin)
 

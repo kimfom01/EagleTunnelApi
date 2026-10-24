@@ -127,6 +127,24 @@ public class ReferralServiceTests
     }
 
     [Fact]
+    public void ClearCredit_RemovesLedgerKeepsRest()
+    {
+        const string comment = "Telegram ID: 5 · Referral credit: 30d · Referred by: friend@example.com";
+
+        var cleared = ReferralService.ClearCredit(comment);
+
+        Assert.Equal(0, ReferralService.GetCreditDays(cleared));
+        Assert.Contains("Telegram ID: 5", cleared);
+        Assert.Contains("Referred by: friend@example.com", cleared);
+        Assert.DoesNotContain("Referral credit", cleared);
+        Assert.DoesNotContain("·  ·", cleared);
+
+        Assert.Equal("base", ReferralService.ClearCredit("Referral credit: 30d · base"));
+        Assert.Equal("", ReferralService.ClearCredit("Referral credit: 30d"));
+        Assert.Equal("", ReferralService.ClearCredit(null));
+    }
+
+    [Fact]
     public void Cancelled_MarkClear()
     {
         var comment = ReferralService.MarkCancelled("base", new DateOnly(2026, 9, 9));
@@ -278,5 +296,94 @@ public class ReferralServiceTests
     {
         Assert.True(ReferralService.HasEverBeenProvisioned(
             Client(false, DateTimeOffset.UtcNow.AddDays(-5).ToUnixTimeMilliseconds())));
+    }
+
+    [Fact]
+    public void HasConvertedToPaid_GenuineTrial_IsFalse()
+    {
+        var ends = DateTimeOffset.UtcNow.AddHours(2);
+        var trial = Client(true, ends.ToUnixTimeMilliseconds()) with
+        {
+            Comment = ReferralService.WithTrialTag(null, ends)
+        };
+
+        Assert.False(ReferralService.HasConvertedToPaid(trial));
+    }
+
+    [Fact]
+    public void HasConvertedToPaid_TrialExtendedOutsideBot_IsTrue()
+    {
+        // Direct payment extended the expiry in the 3X-UI dashboard; the tag remains.
+        var ends = DateTimeOffset.UtcNow.AddHours(2);
+        var paid = Client(true, ends.AddDays(30).ToUnixTimeMilliseconds()) with
+        {
+            Comment = ReferralService.WithTrialTag(null, ends)
+        };
+
+        Assert.True(ReferralService.HasConvertedToPaid(paid));
+    }
+
+    [Fact]
+    public void HasConvertedToPaid_ExpiredUnpaidTrial_IsFalse()
+    {
+        var ends = DateTimeOffset.UtcNow.AddDays(-2);
+        var expired = Client(true, ends.ToUnixTimeMilliseconds()) with
+        {
+            Comment = ReferralService.WithTrialTag(null, ends)
+        };
+
+        Assert.False(ReferralService.HasConvertedToPaid(expired));
+    }
+
+    [Fact]
+    public void HasConvertedToPaid_TrialTagMinuteRounding_IsFalse()
+    {
+        // The tag stores minute precision, so a trial ending seconds later is still a trial.
+        var ends = new DateTimeOffset(2026, 9, 9, 12, 0, 30, TimeSpan.Zero);
+        var trial = Client(true, ends.ToUnixTimeMilliseconds()) with
+        {
+            Comment = "Trial until 2026-09-09 12:00 UTC"
+        };
+
+        Assert.False(ReferralService.HasConvertedToPaid(trial));
+    }
+
+    [Fact]
+    public void HasConvertedToPaid_NoTrialTag_FallsBackToProvisioned()
+    {
+        Assert.True(ReferralService.HasConvertedToPaid(
+            Client(true, DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeMilliseconds())));
+        Assert.False(ReferralService.HasConvertedToPaid(
+            Client(false, DateTimeOffset.UtcNow.AddYears(100).ToUnixTimeMilliseconds())));
+    }
+
+    [Fact]
+    public void TryGetTrialEnd_ParsesUtcMinute()
+    {
+        Assert.True(ReferralService.TryGetTrialEnd(
+            "base · Trial until 2026-09-09 12:30 UTC", out var ends));
+        Assert.Equal(new DateTimeOffset(2026, 9, 9, 12, 30, 0, TimeSpan.Zero), ends);
+
+        Assert.False(ReferralService.TryGetTrialEnd("no tag here", out _));
+        Assert.False(ReferralService.TryGetTrialEnd(null, out _));
+    }
+
+    [Fact]
+    public void ClearActivationComment_ClearsWinBackAndTrialKeepsReferralState()
+    {
+        const string comment = "base · Referred by: a@b.com · Referral credit: 30d · " +
+                               "Cancelled 2026-09-01 · Reminder 3d sent for 2026-09-09 · " +
+                               "Trial until 2026-09-09 12:00 UTC";
+
+        var cleared = ReferralService.ClearActivationComment(comment);
+
+        Assert.NotNull(cleared);
+        Assert.DoesNotContain("Cancelled", cleared);
+        Assert.DoesNotContain("Reminder", cleared);
+        Assert.DoesNotContain("Trial until", cleared);
+        Assert.Contains("Referred by: a@b.com", cleared);
+        Assert.Contains("Referral credit: 30d", cleared);
+
+        Assert.Null(ReferralService.ClearActivationComment(null));
     }
 }

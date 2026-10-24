@@ -104,38 +104,39 @@ public class SubscriptionProvisioner(
         CancellationToken cancellationToken)
     {
         var resolvedExpiry = expiryTimeMs;
+        var comment = expiryTimeMs.HasValue
+            ? ReferralService.ClearActivationComment(client.Comment)
+            : client.Comment;
 
         if (expiryTimeMs.HasValue)
         {
-            var creditMs = (long)ReferralService.GetCreditDays(client.Comment) * 24 * 60 * 60 * 1000;
-            resolvedExpiry = expiryTimeMs.Value + creditMs;
+            // Credit days are already baked into the panel expiry (they were added
+            // when the bonus was granted). The ledger only rides along while the
+            // account still has access; once the expiry passed, those days were
+            // consumed and must not be re-added — otherwise a later payment would
+            // hand out the same bonus month twice.
+            var creditDays = client.ExpiryTime > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                ? ReferralService.GetCreditDays(client.Comment)
+                : 0;
+
+            if (creditDays > 0)
+            {
+                resolvedExpiry = expiryTimeMs.Value + (long)creditDays * 24 * 60 * 60 * 1000;
+            }
+            else
+            {
+                comment = ReferralService.ClearCredit(comment);
+            }
         }
 
         var updateRequest = client.ToUpdateRequest() with
         {
             Enable = enable,
             ExpiryTime = resolvedExpiry ?? client.ExpiryTime,
-            Comment = expiryTimeMs.HasValue ? ClearActivationComment(client.Comment) : client.Comment,
+            Comment = comment,
             InboundIds = _telegramOptions.DefaultInboundIds.ToList()
         };
 
         await panelClient.UpdateClientAsync(updateRequest, cancellationToken);
-    }
-
-    /// <summary>
-    /// Paid access resumed: drop win-back state (cancelled tag, reminder markers)
-    /// and any trial tag. Referral attribution and credit ledger are preserved.
-    /// Returns the original reference when there is nothing to clear.
-    /// </summary>
-    private static string? ClearActivationComment(string? comment)
-    {
-        if (comment is null) return null;
-
-        var cleared = ReferralService.ClearRenewalMarkers(comment);
-
-        if (ReferralService.HasTrialTag(cleared))
-            cleared = ReferralService.ClearTrialTag(cleared);
-
-        return cleared;
     }
 }
