@@ -82,6 +82,7 @@ builder.Services.AddHttpClient("telegram_bot_client")
 builder.Services.AddSingleton<ISubscriptionProvisioner, SubscriptionProvisioner>();
 builder.Services.AddSingleton<ITributeEventsHandler, TributeEventsHandler>();
 builder.Services.AddSingleton<IAdminPanelService, AdminPanelService>();
+builder.Services.AddSingleton<ReferralSettlementRunner>();
 
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<TelegramHandlers>();

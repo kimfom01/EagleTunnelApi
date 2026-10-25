@@ -4,6 +4,7 @@ using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Webhook.Exceptions;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -19,16 +20,19 @@ public sealed class TelegramHandlers : IUpdateHandler
     private readonly string _panelBaseUri;
     private readonly IPanelClient _panelClient;
 
+    private readonly ReferralSettlementRunner _settlementRunner;
     private readonly SessionStore _sessionStore;
     private readonly TelegramOptions _telegramOptions;
 
     public TelegramHandlers(SessionStore sessionStore, IPanelClient panelClient,
-        IAdminPanelService adminPanelService, IOptions<TelegramOptions> telegramOptions,
+        IAdminPanelService adminPanelService, ReferralSettlementRunner settlementRunner,
+        IOptions<TelegramOptions> telegramOptions,
         IOptions<PanelOptions> panelOptions, ILogger<TelegramHandlers> logger)
     {
         _sessionStore = sessionStore;
         _panelClient = panelClient;
         _adminPanelService = adminPanelService;
+        _settlementRunner = settlementRunner;
         _telegramOptions = telegramOptions.Value;
         _panelBaseUri = panelOptions.Value.BaseUri;
         _logger = logger;
@@ -779,11 +783,15 @@ public sealed class TelegramHandlers : IUpdateHandler
         var data = callbackQuery.Data ?? "";
         var session = _sessionStore.Get(telegramId.Value);
 
+        // Acknowledge before doing any panel work. Settlement and admin actions
+        // can take a while; a late answer leaves the button spinning and can
+        // throw once the callback id expires.
+        await AnswerCallbackAsync(botClient, callbackQuery, cancellationToken);
+
         if (IsAdmin(telegramId.Value) &&
             (data == MenuService.Admin || data.StartsWith(MenuService.Admin, StringComparison.Ordinal)))
         {
             await HandleAdminCallback(botClient, telegramId.Value, messageId, data, cancellationToken);
-            await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
             return;
         }
 
@@ -849,8 +857,19 @@ public sealed class TelegramHandlers : IUpdateHandler
                 await SendLastInviteQrAsync(botClient, telegramId.Value, cancellationToken);
                 break;
         }
+    }
 
-        await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+    private async Task AnswerCallbackAsync(ITelegramBotClient botClient, CallbackQuery callbackQuery,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to answer callback query. CallbackId: {CallbackId}", callbackQuery.Id);
+        }
     }
 
     private bool IsAdmin(long telegramId)
@@ -2332,27 +2351,73 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task ExecuteAdminSettleAsync(ITelegramBotClient botClient, long telegramId, int messageId,
         CancellationToken cancellationToken)
     {
-        await botClient.EditMessageText(telegramId, messageId,
+        // Start the sweep before touching the message so the button stays
+        // responsive: the webhook request returns immediately, and Telegram
+        // never times out and redelivers the callback.
+        var run = _settlementRunner.TryStart();
+
+        if (run is null)
+        {
+            await SafeEditAsync(botClient, telegramId, messageId,
+                "⏳ A referral settlement run is already in progress.",
+                MenuService.AdminMenu(), cancellationToken);
+            return;
+        }
+
+        await SafeEditAsync(botClient, telegramId, messageId,
             "⏳ Scanning clients for pending referral bonuses…",
-            replyMarkup: MenuService.AdminInputMenu(), cancellationToken: cancellationToken);
+            MenuService.AdminInputMenu(), cancellationToken);
+
+        _ = ReportSettlementAsync(botClient, telegramId, messageId, run);
+    }
+
+    private async Task ReportSettlementAsync(ITelegramBotClient botClient, long telegramId, int messageId,
+        Task<ReferralSettlementResult> run)
+    {
+        ReferralSettlementResult result;
 
         try
         {
-            var settled = await _adminPanelService.SettlePendingReferralBonusesAsync(cancellationToken);
-
-            await botClient.EditMessageText(telegramId, messageId,
-                settled == 0
-                    ? "✅ No pending referral bonuses found."
-                    : $"✅ Settled **{settled}** referral bonus{(settled == 1 ? "" : "es")}.",
-                ParseMode.Markdown, MenuService.AdminMenu(), cancellationToken: cancellationToken);
+            result = await run;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Referral settlement run failed. Admin: {TelegramId}", telegramId);
-            await botClient.EditMessageText(telegramId, messageId,
-                "❌ Settlement failed — check the logs and try again.",
-                replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
+            _logger.LogError(ex, "Referral settlement task failed. Admin: {TelegramId}", telegramId);
+            result = new ReferralSettlementResult(false, 0);
         }
+
+        var text = !result.Succeeded
+            ? "❌ Settlement failed — check the logs and try again."
+            : result.Settled == 0
+                ? "✅ No pending referral bonuses found."
+                : $"✅ Settled **{result.Settled}** referral bonus{(result.Settled == 1 ? "" : "es")}.";
+
+        await SafeEditAsync(botClient, telegramId, messageId, text, MenuService.AdminMenu(),
+            CancellationToken.None);
+    }
+
+    private async Task SafeEditAsync(ITelegramBotClient botClient, long telegramId, int messageId, string text,
+        InlineKeyboardMarkup replyMarkup, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await botClient.EditMessageText(telegramId, messageId, text, ParseMode.Markdown,
+                replyMarkup: replyMarkup, cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (IsMessageNotModified(ex))
+        {
+            _logger.LogDebug("Settlement message unchanged. TelegramId: {TelegramId}", telegramId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to edit settlement message. TelegramId: {TelegramId}", telegramId);
+        }
+    }
+
+    private static bool IsMessageNotModified(Exception exception)
+    {
+        return exception is ApiRequestException { ErrorCode: 400 } apiException &&
+               apiException.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ExecuteAdminBan(ITelegramBotClient botClient, long telegramId, int messageId,

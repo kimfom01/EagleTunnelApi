@@ -113,7 +113,10 @@ public class TelegramHandlersTests
         var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient,
             bot, telegramOptions);
 
-        var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService,
+        var settlementRunner = new ReferralSettlementRunner(adminPanelService, new TestHostApplicationLifetime(),
+            NullLogger<ReferralSettlementRunner>.Instance);
+
+        var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService, settlementRunner,
             telegramOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
             NullLogger<TelegramHandlers>.Instance);
 
@@ -2450,10 +2453,66 @@ public class TelegramHandlersTests
 
         await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminSettle), CancellationToken.None);
 
+        await bot.WaitForAsync((_, body) =>
+            body.Contains("Settled") || body.Contains("No pending referral bonuses"));
+
         var edits = bot.Requests.Where(r => r.MethodName == "editMessageText").ToList();
 
         Assert.Contains(edits, r => r.Body.Contains("Scanning"));
         Assert.Contains(edits, r => r.Body.Contains("Settled"));
+    }
+
+    [Fact]
+    public async Task AdminSettle_WhenAlreadyRunning_DoesNotStartSecondSweep()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adminPanelService = new StubAdminPanelService
+        {
+            SettleHandler = async cancellationToken =>
+            {
+                await release.Task.WaitAsync(cancellationToken);
+                return 0;
+            }
+        };
+
+        var bot = new FakeTelegramBotClient();
+        var telegramOptions = Options.Create(new TelegramOptions
+        {
+            BotToken = "token",
+            SupportUrl = "https://t.me/support",
+            TributeSubscriptionUrl = "https://tribute.test",
+            BotUsername = "TestBot",
+            DefaultInboundIds = new[] { 2, 6 },
+            WebhookPath = "/webhooks/telegram",
+            AdminIds = new[] { TelegramId }
+        });
+
+        var panelClient = new PanelApiClient(
+            new HttpClient(new StubHttpMessageHandler(_ => throw new InvalidOperationException("panel not used")))
+            {
+                BaseAddress = new Uri(PanelBaseUri)
+            },
+            NullLogger<PanelApiClient>.Instance);
+
+        var settlementRunner = new ReferralSettlementRunner(adminPanelService,
+            new TestHostApplicationLifetime(), NullLogger<ReferralSettlementRunner>.Instance);
+
+        var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService, settlementRunner,
+            telegramOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
+            NullLogger<TelegramHandlers>.Instance);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminSettle), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminSettle), CancellationToken.None);
+
+        Assert.Equal(1, adminPanelService.SettleCalls);
+        Assert.Contains(bot.Requests,
+            r => r.MethodName == "editMessageText" && r.Body.Contains("already in progress"));
+
+        release.SetResult(true);
+
+        await bot.WaitForAsync((_, body) => body.Contains("No pending referral bonuses"));
+
+        Assert.Equal(1, adminPanelService.SettleCalls);
     }
 
     [Fact]
