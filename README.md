@@ -227,7 +227,19 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
   reminder instantly for any linked account, and manual grants clear the cancelled/reminder markers just like a
   Tribute renewal. `/admin` lookup shows referral, credit, and cancellation state per account.
 - This flow is interim until a credits-based payment platform replaces Tribute; the referral ledger maps 1:1 onto future
-  credit balances. Full detail lives in [REFERRAL_PLAN.md](REFERRAL_PLAN.md).
+  credit balances. See [FEATURES.md](FEATURES.md) for the credits design and other unimplemented work.
+
+## Roadmap
+
+Unimplemented work is tracked in [FEATURES.md](FEATURES.md):
+
+- Clean architecture refactor (Domain/Application/Infrastructure/Api) so new features land behind explicit boundaries.
+- Email-first Vite + React web app with PostgreSQL-backed auth/identity/audit; no Telegram required to log in.
+- Credits ledger and eventual Tribute replacement.
+- Pending manual verification and operational checks.
+
+Implemented behavior stays in this README and the test suite; `FEATURES.md` is the single backlog for what is not built
+yet.
 
 ## Tests
 

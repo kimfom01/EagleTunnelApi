@@ -8,8 +8,7 @@
         <File Path=".dockerignore" />
         <File Path="Dockerfile" />
         <File Path="README.md" />
-        <File Path="REFERRAL_PLAN.md" />
-        <File Path="TESTING_PLAN.md" />
+        <File Path="FEATURES.md" />
     </Folder>
     <Project Path="EagleTunnelApi.AppHost/EagleTunnelApi.AppHost.csproj" />
     <Project Path="EagleTunnelApi.ServiceDefaults/EagleTunnelApi.ServiceDefaults.csproj" />
