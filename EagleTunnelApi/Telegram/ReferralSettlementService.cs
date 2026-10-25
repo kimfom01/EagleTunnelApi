@@ -11,7 +11,7 @@ namespace EagleTunnelApi.Telegram;
 /// Webhook and bot-grant activations settle instantly; this is the backstop.
 /// </summary>
 public sealed class ReferralSettlementService(
-    IAdminPanelService adminPanelService,
+    ReferralSettlementRunner settlementRunner,
     IOptions<TelegramOptions> telegramOptions,
     ILogger<ReferralSettlementService> logger) : BackgroundService
 {
@@ -34,8 +34,17 @@ public sealed class ReferralSettlementService(
 
             try
             {
-                var settled = await adminPanelService.SettlePendingReferralBonusesAsync(stoppingToken);
-                logger.LogInformation("Referral settlement pass complete. Settled: {Settled}", settled);
+                var run = settlementRunner.TryStart();
+
+                if (run is null)
+                {
+                    logger.LogInformation("Referral settlement already running; skipping this pass.");
+                    continue;
+                }
+
+                var result = await run;
+
+                if (!result.Succeeded) logger.LogWarning("Referral settlement pass did not complete.");
             }
             catch (OperationCanceledException)
             {

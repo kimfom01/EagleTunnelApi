@@ -82,16 +82,21 @@ builder.Services.AddHttpClient("telegram_bot_client")
 builder.Services.AddSingleton<ISubscriptionProvisioner, SubscriptionProvisioner>();
 builder.Services.AddSingleton<ITributeEventsHandler, TributeEventsHandler>();
 builder.Services.AddSingleton<IAdminPanelService, AdminPanelService>();
+builder.Services.AddSingleton<ReferralSettlementRunner>();
 
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<TelegramHandlers>();
 builder.Services.AddSingleton<IUpdateHandler>(sp => sp.GetRequiredService<TelegramHandlers>());
+builder.Services.AddSingleton<TelegramUpdateDeduplicator>();
+builder.Services.AddSingleton<TelegramWebhookProcessor>();
 
 if (!builder.Environment.IsProduction()) builder.Services.AddHostedService<TelegramPollingService>();
 
 builder.Services.AddHostedService<ExpiryReminderService>();
 
 builder.Services.AddHostedService<ReferralSettlementService>();
+
+builder.Services.AddHostedService<PanelInboundPreflightService>();
 
 var app = builder.Build();
 
@@ -158,8 +163,8 @@ app.MapPost("/webhooks/tribute", async (HttpRequest request, IVerifier verifier,
 
 var telegramOptions = app.Services.GetRequiredService<IOptions<TelegramOptions>>().Value;
 
-app.MapPost(telegramOptions.WebhookPath, async (HttpRequest request, IUpdateHandler updateHandler,
-    ITelegramBotClient botClient, CancellationToken cancellationToken) =>
+app.MapPost(telegramOptions.WebhookPath, async (HttpRequest request, TelegramWebhookProcessor processor,
+    CancellationToken cancellationToken) =>
 {
     var configuredSecretToken = telegramOptions.WebhookSecretToken;
 
@@ -179,7 +184,7 @@ app.MapPost(telegramOptions.WebhookPath, async (HttpRequest request, IUpdateHand
 
     if (update is null) return Results.BadRequest("Invalid body");
 
-    await updateHandler.HandleUpdateAsync(botClient, update, cancellationToken);
+    await processor.ProcessAsync(update, cancellationToken);
 
     return Results.Ok();
 });

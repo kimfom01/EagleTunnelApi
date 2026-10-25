@@ -9,7 +9,13 @@ namespace EagleTunnelApi.Tests.Helpers;
 
 public sealed class FakeTelegramBotClient : ITelegramBotClient
 {
+    private readonly object _sync = new();
+
+    private readonly List<(Func<string, string, bool> Predicate, TaskCompletionSource<bool> Completion)>
+        _waiters = [];
+
     public List<(string MethodName, string Body)> Requests { get; } = [];
+
     public bool LocalBotServer { get; } = false;
 
     public long BotId { get; } = 0;
@@ -30,6 +36,29 @@ public sealed class FakeTelegramBotClient : ITelegramBotClient
         remove { }
     }
 
+    /// <summary>
+    /// Completes when a request whose method/body matches <paramref name="predicate"/>
+    /// has been sent, including requests sent by detached background work.
+    /// </summary>
+    public Task WaitForAsync(Func<string, string, bool> predicate)
+    {
+        lock (_sync)
+        {
+            if (Requests.Any(request => predicate(request.MethodName, request.Body))) return Task.CompletedTask;
+
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            _waiters.Add((predicate, completion));
+
+            return completion.Task;
+        }
+    }
+
+    public Task WaitForBodyAsync(string fragment)
+    {
+        return WaitForAsync((_, body) => body.Contains(fragment, StringComparison.Ordinal));
+    }
+
     public Task<TResponse> SendRequest<TResponse>(IRequest<TResponse> request,
         CancellationToken cancellationToken = default)
     {
@@ -38,7 +67,24 @@ public sealed class FakeTelegramBotClient : ITelegramBotClient
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         var body = content.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
 
-        Requests.Add((request.MethodName, body));
+        List<TaskCompletionSource<bool>> completed;
+
+        lock (_sync)
+        {
+            Requests.Add((request.MethodName, body));
+
+            completed = [];
+
+            for (var i = _waiters.Count - 1; i >= 0; i--)
+            {
+                if (!_waiters[i].Predicate(request.MethodName, body)) continue;
+
+                completed.Add(_waiters[i].Completion);
+                _waiters.RemoveAt(i);
+            }
+        }
+
+        foreach (var completion in completed) completion.TrySetResult(true);
 
         TResponse result = default!;
         return Task.FromResult(result);
