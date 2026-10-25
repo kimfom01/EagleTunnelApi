@@ -128,6 +128,28 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
         return clients;
     }
 
+    public async Task<IReadOnlyList<PanelInboundOption>> GetInboundOptionsAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Fetching Inbound Options From Panel");
+
+        var response = await GetJsonAsync<PanelApiResponse<List<PanelInboundOption>>>(
+            "/admin/panel/api/inbounds/options", cancellationToken);
+
+        if (response is null) throw new PanelApiException("Panel returned an empty response");
+
+        if (!response.Success)
+        {
+            logger.LogError("Panel inbound options fetch failed. Message: {Msg}", response.Msg);
+            throw new PanelApiException($"Panel inbound options fetch failed: {response.Msg}");
+        }
+
+        var inbounds = response.Obj ?? new List<PanelInboundOption>();
+
+        logger.LogInformation("Successfully Fetched Inbound Options From Panel. Count: {Count}", inbounds.Count);
+
+        return inbounds;
+    }
+
     public async Task ResetClientTrafficAsync(string email, CancellationToken cancellationToken)
     {
         logger.LogInformation("Resetting Client Traffic At Panel. Email: {Email}", email);

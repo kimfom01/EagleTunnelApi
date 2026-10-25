@@ -1220,6 +1220,33 @@ public class TelegramHandlersTests
     }
 
     [Fact]
+    public async Task AdminRegister_AddFails_ShowsPanelErrorAndConfigHint()
+    {
+        var (handler, bot) = CreateHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+
+            if (path == "/admin/panel/api/clients/get/newbie@example.com")
+                return Json(FailureJson("not found"));
+
+            if (path == "/admin/panel/api/clients/add")
+                return Json(FailureJson("Something went wrong (inbound 1: record not found)"));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, adminIds: [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminRegister), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("newbie@example.com"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, TextUpdate("/skip"), CancellationToken.None);
+
+        var failure = bot.Requests.Last(r => r.MethodName == "sendMessage");
+
+        Assert.Contains("inbound 1: record not found", failure.Body);
+        Assert.Contains("DefaultInboundIds", failure.Body);
+    }
+
+    [Fact]
     public async Task AdminRegister_GrantDays_CreatesWithExpiry()
     {
         var requests = new List<HttpRequestMessage>();

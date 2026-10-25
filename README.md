@@ -102,7 +102,7 @@ Configuration is handled via standard ASP.NET Core mechanisms (`appsettings.json
 | `Panel:ApiKey`                | `Panel__ApiKey`                | API token for authenticating with the Panel.                                                 |
 | `Telegram:BotToken`           | `Telegram__BotToken`           | Bot token from @BotFather.                                                                   |
 | `Telegram:SupportUrl`         | `Telegram__SupportUrl`         | Support contact link shown by `/help`.                                                       |
-| `Telegram:DefaultInboundIds`  | `Telegram__DefaultInboundIds`  | Comma-separated inbound ids new clients are attached to.                                     |
+| `Telegram:DefaultInboundIds`  | `Telegram__DefaultInboundIds`  | Comma-separated panel inbound ids new clients are attached to. Must match the panel — the panel rejects the whole add call if any id no longer exists. |
 | `Telegram:AdminIds`           | `Telegram__AdminIds`           | Comma-separated Telegram ids allowed to use `/admin`.                                        |
 | `Telegram:WebhookPath`        | `Telegram__WebhookPath`        | Path of the Telegram webhook endpoint (default `/webhooks/telegram`).                        |
 | `Telegram:WebhookUrl`         | `Telegram__WebhookUrl`         | Public base URL used to register the webhook (**required in production**).                   |
@@ -179,6 +179,11 @@ before email registration) are migrated to real emails on next `/start`. Auto-cr
 collides with a concurrently-created client, the service re-fetches by Telegram ID and updates the existing client
 instead of failing. Referral attribution, bonus credit, cancellation flags, and reminder markers are stored in the
 client's free-form `comment` field (see [Referral System](#referral-system)).
+
+> **Panel upgrades:** `Telegram:DefaultInboundIds` must contain ids that still exist on the panel. Recent 3X-UI
+> versions reject the entire `clients/add` call if any requested inbound id is missing. The service checks this at
+> startup and logs a critical message listing the missing and available ids; `/admin` registration also shows the
+> panel's error when a create fails.
 
 Panel responses that report `"success": false` (the panel answers HTTP 200 even on failure) are treated as errors so
 failed panel operations surface as non-200 responses and trigger a retry rather than being silently acknowledged.

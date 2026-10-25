@@ -20,5 +20,7 @@ public interface IPanelClient
 
     Task<IReadOnlyList<PanelClientSummary>> GetAllClientsAsync(CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<PanelInboundOption>> GetInboundOptionsAsync(CancellationToken cancellationToken);
+
     Task ResetClientTrafficAsync(string email, CancellationToken cancellationToken);
 }

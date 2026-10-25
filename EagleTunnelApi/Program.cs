@@ -93,6 +93,8 @@ builder.Services.AddHostedService<ExpiryReminderService>();
 
 builder.Services.AddHostedService<ReferralSettlementService>();
 
+builder.Services.AddHostedService<PanelInboundPreflightService>();
+
 var app = builder.Build();
 
 app.MapDefaultEndpoints();

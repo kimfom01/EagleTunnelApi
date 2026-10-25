@@ -2639,8 +2639,14 @@ public sealed class TelegramHandlers : IUpdateHandler
         catch (PanelApiException ex)
         {
             _logger.LogError(ex, "Admin registration failed. Email: {Email}", email);
+
+            var detail = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
+
             await botClient.SendMessage(adminId,
-                "❌ Registration failed. The email may have been taken just now — please try again.",
+                $"❌ Registration failed for {email}.\n\n" +
+                $"Panel: {detail}\n\n" +
+                "If the panel was updated recently, check that Telegram:DefaultInboundIds " +
+                "matches its current inbound IDs.",
                 replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
         }
     }
