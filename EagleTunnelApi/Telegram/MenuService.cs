@@ -1,3 +1,4 @@
+using EagleTunnelApi.Domain.Subscriptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.ReplyMarkups;
 

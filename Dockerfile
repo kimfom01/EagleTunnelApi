@@ -8,6 +8,9 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.100-alpine3.22 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["EagleTunnelApi/EagleTunnelApi.csproj", "EagleTunnelApi/"]
+COPY ["EagleTunnelApi.Domain/EagleTunnelApi.Domain.csproj", "EagleTunnelApi.Domain/"]
+COPY ["EagleTunnelApi.Application/EagleTunnelApi.Application.csproj", "EagleTunnelApi.Application/"]
+COPY ["EagleTunnelApi.Infrastructure/EagleTunnelApi.Infrastructure.csproj", "EagleTunnelApi.Infrastructure/"]
 COPY ["EagleTunnelApi.ServiceDefaults/EagleTunnelApi.ServiceDefaults.csproj", "EagleTunnelApi.ServiceDefaults/"]
 RUN dotnet restore "EagleTunnelApi/EagleTunnelApi.csproj"
 COPY . .

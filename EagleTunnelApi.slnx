@@ -7,11 +7,14 @@
     <Folder Name="/Solution Items/">
         <File Path=".dockerignore" />
         <File Path="Dockerfile" />
+        <File Path="DEPLOYMENT.md" />
         <File Path="README.md" />
-        <File Path="REFERRAL_PLAN.md" />
-        <File Path="TESTING_PLAN.md" />
+        <File Path="FEATURES.md" />
     </Folder>
     <Project Path="EagleTunnelApi.AppHost/EagleTunnelApi.AppHost.csproj" />
+    <Project Path="EagleTunnelApi.Application/EagleTunnelApi.Application.csproj" />
+    <Project Path="EagleTunnelApi.Domain/EagleTunnelApi.Domain.csproj" />
+    <Project Path="EagleTunnelApi.Infrastructure/EagleTunnelApi.Infrastructure.csproj" />
     <Project Path="EagleTunnelApi.ServiceDefaults/EagleTunnelApi.ServiceDefaults.csproj" />
     <Project Path="EagleTunnelApi/EagleTunnelApi.csproj" />
     <Project Path="EagleTunnelApi.Tests/EagleTunnelApi.Tests.csproj" />

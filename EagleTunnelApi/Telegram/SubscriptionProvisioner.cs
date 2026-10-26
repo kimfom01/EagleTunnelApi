@@ -1,4 +1,5 @@
 using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Domain.Referrals;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Webhook.Exceptions;

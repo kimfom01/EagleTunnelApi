@@ -21,6 +21,9 @@
 
     <ItemGroup>
         <ProjectReference Include="..\EagleTunnelApi.ServiceDefaults\EagleTunnelApi.ServiceDefaults.csproj" />
+        <ProjectReference Include="..\EagleTunnelApi.Domain\EagleTunnelApi.Domain.csproj" />
+        <ProjectReference Include="..\EagleTunnelApi.Application\EagleTunnelApi.Application.csproj" />
+        <ProjectReference Include="..\EagleTunnelApi.Infrastructure\EagleTunnelApi.Infrastructure.csproj" />
     </ItemGroup>
 
 </Project>

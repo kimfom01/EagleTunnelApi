@@ -1,4 +1,5 @@
 using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Domain.Referrals;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Webhook.Exceptions;
@@ -247,7 +248,7 @@ public class AdminPanelService(
         // direct payments in the 3X-UI dashboard leave a trial tag on a row whose
         // expiry was pushed past the trial window. Both count as paid here; a
         // genuine, still-running trial stays pending.
-        if (!ReferralService.HasConvertedToPaid(referee)) return false;
+        if (!ReferralService.HasConvertedToPaid(referee.Enable, referee.ExpiryTime, DateTimeOffset.UtcNow, referee.Comment)) return false;
 
         if (!ReferralService.TryParseReferredBy(referee.Comment, out var referrerEmail, out _))
             return false;
@@ -341,7 +342,7 @@ public class AdminPanelService(
             // Only accounts that converted to paid access without a payout qualify.
             // Never-provisioned accounts are settled by their activation path instead.
             // Trial tags left by a dashboard/direct extension count as paid here.
-            if (!ReferralService.HasConvertedToPaid(client)) continue;
+            if (!ReferralService.HasConvertedToPaid(client.Enable, client.ExpiryTime, DateTimeOffset.UtcNow, client.Comment)) continue;
 
             try
             {
@@ -375,7 +376,7 @@ public class AdminPanelService(
         // Webhook and manual-grant callers hold the pre-activation snapshot, so a
         // genuinely new subscriber is required. The sweep pre-filters instead
         // (attributed + converted to paid + still unpaid) and skips this check.
-        if (requireFirstActivation && ReferralService.HasEverBeenProvisioned(refereeBefore)) return false;
+        if (requireFirstActivation && ReferralService.HasEverBeenProvisioned(refereeBefore.Enable, refereeBefore.ExpiryTime, DateTimeOffset.UtcNow, refereeBefore.Comment)) return false;
 
         if (!ReferralService.TryParseReferredBy(refereeBefore.Comment, out var referrerEmail, out _))
             return false;
