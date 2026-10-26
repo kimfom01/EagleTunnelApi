@@ -431,7 +431,8 @@ next one starts; do not expose routes before the use cases behind them are cover
 
 ## 2. Clean architecture refactor
 
-**Status:** Planned. This is the delivery vehicle for the web app, not a separate rewrite.
+**Status:** Planned. **R0 (project skeleton and boundary tests) is implemented.** This is the delivery vehicle for the
+web app, not a separate rewrite.
 
 ### 2.1 Why now
 
@@ -569,7 +570,7 @@ Each phase is a separately verifiable, commit-sized slice. No behavior change un
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| R0 | Create Domain/Application/Infrastructure projects, add project references, add architecture tests. Move no production code. | Solution builds; all existing tests pass; architecture tests fail on an intentional violation. |
+| R0 ✅ | Create Domain/Application/Infrastructure projects, add project references, add architecture tests. Move no production code. | Solution builds; all existing tests pass; architecture tests fail on an intentional violation. |
 | R1 | Move pure Domain types and their tests (`SubscriptionStatus`, formatter, referral parsing/policies, email normalization). | Existing behavior unchanged; tests moved/updated; no panel DTOs in Domain. |
 | R2 | Introduce `IPanelGateway` and application models; move `PanelApiClient` + DTOs to Infrastructure; map at the boundary. | No panel DTOs outside Infrastructure; not-found vs unavailable preserved; tests pass. |
 | R3a | EF Core/Postgres foundation: `AppDbContext`, configurations, migrations, startup migration runner, Testcontainers harness, auth/session/outbox/audit/panel-mirror schema. No HTTP endpoints. | Migrations apply to a clean Postgres; schema tests cover unique/partial indexes and `xmin`; no endpoints exposed. |
@@ -579,6 +580,9 @@ Each phase is a separately verifiable, commit-sized slice. No behavior change un
 | R5 | Extract admin, reminder, trial, cancel, and device-limit use cases; split `AdminPanelService`; background jobs call use cases. | Admin/reminder behavior unchanged; `AdminPanelService` is gone or a thin facade; tests pass. |
 | R6 | Add web auth endpoints + SPA shell + DB-backed dashboard + manual refresh. | Login, session, dashboard, refresh, and logout work end to end; no Telegram requirement. |
 | R7 | Credits ledger (Section 3). | Ledger design implemented behind use cases; panel projection reconciled. |
+
+R0 is implemented: the Domain/Application/Infrastructure projects and NetArchTest boundary tests are in the solution.
+R1–R7 remain unbuilt.
 
 Sequencing:
 

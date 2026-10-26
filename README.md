@@ -128,16 +128,20 @@ Telegram__BotUsername=YourBotName
 
 ## Project Structure
 
-- **`EagleTunnelApi/`**: The main API service.
+- **`EagleTunnelApi/`**: The main API service and composition root.
     - `Program.cs`: Composition root; webhook and bot endpoints.
     - `Configuration/`: Strongly-typed options with fail-fast validation on startup.
     - `PanelApi/`: 3X-UI panel REST client, models, and shared client defaults.
     - `Telegram/`: Bot update handlers, menus, sessions, provisioning, referrals, reminders, admin actions.
     - `Webhook/`: Tribute event models, HMAC signature verification, event handlers.
     - `Logging/`: Correlation-id middleware and outgoing-request logging.
+- **`EagleTunnelApi.Domain/`**: Pure business rules. No project or framework dependencies.
+- **`EagleTunnelApi.Application/`**: Use cases and ports. References Domain only.
+- **`EagleTunnelApi.Infrastructure/`**: Adapters for the panel, email, and persistence. References Application and Domain.
+  The Telegram adapter stays in the API project for now.
 - **`EagleTunnelApi.AppHost/`**: .NET Aspire orchestration project for managing dependencies and local environment.
 - **`EagleTunnelApi.ServiceDefaults/`**: Shared configurations for observability, health checks, and service defaults.
-- **`EagleTunnelApi.Tests/`**: xUnit unit tests for webhook verification, subscription handling, and the bot handlers.
+- **`EagleTunnelApi.Tests/`**: xUnit unit tests plus NetArchTest project-boundary tests.
 - **`Dockerfile`**: Container definition for production deployment.
 
 ## Webhook Endpoint Details
@@ -234,6 +238,7 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 Unimplemented work is tracked in [FEATURES.md](FEATURES.md):
 
 - Clean architecture refactor (Domain/Application/Infrastructure/Api) so new features land behind explicit boundaries.
+  R0 (projects and NetArchTest boundary tests) is implemented; the remaining slices move code behind the boundaries.
 - Email-first Vite + React web app with PostgreSQL-backed auth/identity/audit; no Telegram required to log in.
 - PostgreSQL panel mirror with 10-minute reconciliation, manual refresh, conflict alerts, and comment-state migration.
 - Telegram `Panel Management` v1: default inbounds, sync status, and conflicts.
