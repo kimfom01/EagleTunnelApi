@@ -1,3 +1,5 @@
+using EagleTunnelApi.Domain.Referrals;
+using EagleTunnelApi.Domain.Subscriptions;
 using EagleTunnelApi.PanelApi.Models;
 
 namespace EagleTunnelApi.Telegram;
@@ -27,7 +29,8 @@ public sealed record UserDetails(
         if (response is null) return null;
 
         var client = response.Client;
-        var status = SubscriptionFormatter.DeriveStatus(client, response.UsedTraffic);
+        var status = SubscriptionFormatter.DeriveStatus(client.Enable, client.ExpiryTime, client.TotalGB,
+            response.UsedTraffic, DateTimeOffset.UtcNow);
         var subId = client.SubId ?? "";
 
         return new UserDetails(
@@ -56,6 +59,6 @@ public sealed record UserDetails(
 
     public bool HasConvertedToPaid()
     {
-        return ReferralService.HasConvertedToPaid(Enable, ExpiryTimeMs, Comment);
+        return ReferralService.HasConvertedToPaid(Enable, ExpiryTimeMs, DateTimeOffset.UtcNow, Comment);
     }
 }

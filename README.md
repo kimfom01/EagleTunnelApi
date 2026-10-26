@@ -135,7 +135,8 @@ Telegram__BotUsername=YourBotName
     - `Telegram/`: Bot update handlers, menus, sessions, provisioning, referrals, reminders, admin actions.
     - `Webhook/`: Tribute event models, HMAC signature verification, event handlers.
     - `Logging/`: Correlation-id middleware and outgoing-request logging.
-- **`EagleTunnelApi.Domain/`**: Pure business rules. No project or framework dependencies.
+- **`EagleTunnelApi.Domain/`**: Pure business rules: subscription status/formatter, referral/trial/credit tag policy, and
+  email normalization. No project references.
 - **`EagleTunnelApi.Application/`**: Use cases and ports. References Domain only.
 - **`EagleTunnelApi.Infrastructure/`**: Adapters for the panel, email, and persistence. References Application and Domain.
   The Telegram adapter stays in the API project for now.
@@ -238,7 +239,8 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 Unimplemented work is tracked in [FEATURES.md](FEATURES.md):
 
 - Clean architecture refactor (Domain/Application/Infrastructure/Api) so new features land behind explicit boundaries.
-  R0 (projects and NetArchTest boundary tests) is implemented; the remaining slices move code behind the boundaries.
+  R0 (projects and NetArchTest boundary tests) and R1 (pure domain types) are implemented; the remaining slices move
+  code behind the boundaries.
 - Email-first Vite + React web app with PostgreSQL-backed auth/identity/audit; no Telegram required to log in.
 - PostgreSQL panel mirror with 10-minute reconciliation, manual refresh, conflict alerts, and comment-state migration.
 - Telegram `Panel Management` v1: default inbounds, sync status, and conflicts.

@@ -1,9 +1,7 @@
 using System.Globalization;
-using System.Net.Mail;
 using System.Text.RegularExpressions;
-using EagleTunnelApi.PanelApi.Models;
 
-namespace EagleTunnelApi.Telegram;
+namespace EagleTunnelApi.Domain.Referrals;
 
 public static partial class ReferralService
 {
@@ -22,30 +20,6 @@ public static partial class ReferralService
     public const string CancelledTagPrefix = "Cancelled ";
 
     public const string TrialTagPrefix = "Trial until ";
-
-    public static string? NormalizeEmail(string? email)
-    {
-        if (string.IsNullOrWhiteSpace(email)) return null;
-
-        return email.Trim().ToLowerInvariant();
-    }
-
-    public static bool IsValidEmail(string? email)
-    {
-        var normalized = NormalizeEmail(email);
-
-        if (normalized is null || normalized.Length > 254) return false;
-
-        try
-        {
-            var address = new MailAddress(normalized);
-            return address.Address == normalized && normalized.Contains('.');
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-    }
 
     public static string BuildRefPayload(long telegramId)
     {
@@ -205,14 +179,10 @@ public static partial class ReferralService
         return comment?.Contains(BuildReminderMarker(days, expiryDate), StringComparison.Ordinal) is true;
     }
 
-    public static bool HasEverBeenProvisioned(PanelClient client)
+    public static bool HasEverBeenProvisioned(bool enable, long expiryTimeMs, DateTimeOffset now,
+        string? comment = null)
     {
-        return HasEverBeenProvisioned(client.Enable, client.ExpiryTime, client.Comment);
-    }
-
-    public static bool HasEverBeenProvisioned(bool enable, long expiryTimeMs, string? comment = null)
-    {
-        return (enable || expiryTimeMs <= DateTimeOffset.UtcNow.AddYears(50).ToUnixTimeMilliseconds()) &&
+        return (enable || expiryTimeMs <= now.AddYears(50).ToUnixTimeMilliseconds()) &&
             !HasTrialTag(comment);
     }
 
@@ -226,12 +196,8 @@ public static partial class ReferralService
     /// <see cref="HasEverBeenProvisioned"/> so a friend who pays before claiming
     /// keeps their attribution.
     /// </summary>
-    public static bool HasConvertedToPaid(PanelClient client)
-    {
-        return HasConvertedToPaid(client.Enable, client.ExpiryTime, client.Comment);
-    }
-
-    public static bool HasConvertedToPaid(bool enable, long expiryTimeMs, string? comment = null)
+    public static bool HasConvertedToPaid(bool enable, long expiryTimeMs, DateTimeOffset now,
+        string? comment = null)
     {
         // Genuine trial rows expire at the tag's own time. Anything meaningfully
         // later was paid for; the one-hour tolerance absorbs the tag's minute
@@ -239,7 +205,7 @@ public static partial class ReferralService
         if (HasTrialTag(comment) && TryGetTrialEnd(comment, out var trialEnds))
             return enable && expiryTimeMs > trialEnds.AddHours(1).ToUnixTimeMilliseconds();
 
-        return HasEverBeenProvisioned(enable, expiryTimeMs, comment);
+        return HasEverBeenProvisioned(enable, expiryTimeMs, now, comment);
     }
 
     public static bool TryGetTrialEnd(string? comment, out DateTimeOffset trialEnds)

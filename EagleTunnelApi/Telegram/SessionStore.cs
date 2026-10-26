@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using EagleTunnelApi.Domain.Subscriptions;
 
 namespace EagleTunnelApi.Telegram;
 

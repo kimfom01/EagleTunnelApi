@@ -1,4 +1,7 @@
 using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Domain.Identity;
+using EagleTunnelApi.Domain.Referrals;
+using EagleTunnelApi.Domain.Subscriptions;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Webhook.Exceptions;
@@ -331,9 +334,9 @@ public sealed class TelegramHandlers : IUpdateHandler
         string text, CancellationToken cancellationToken)
     {
         var session = _sessionStore.Get(telegramId);
-        var email = ReferralService.NormalizeEmail(text);
+        var email = EmailAddress.Normalize(text);
 
-        if (!ReferralService.IsValidEmail(email))
+        if (!EmailAddress.IsValid(email))
         {
             await botClient.SendMessage(telegramId,
                 "❌ That doesn't look like a valid email address. Please try again:",
@@ -417,9 +420,9 @@ public sealed class TelegramHandlers : IUpdateHandler
         string text, CancellationToken cancellationToken)
     {
         var session = _sessionStore.Get(telegramId);
-        var email = ReferralService.NormalizeEmail(text);
+        var email = EmailAddress.Normalize(text);
 
-        if (!ReferralService.IsValidEmail(email))
+        if (!EmailAddress.IsValid(email))
         {
             if (session.ReferrerRequired)
             {
@@ -521,7 +524,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         var client = response.Client;
 
-        if (ReferralService.HasConvertedToPaid(client))
+        if (ReferralService.HasConvertedToPaid(client.Enable, client.ExpiryTime, DateTimeOffset.UtcNow, client.Comment))
         {
             await botClient.SendMessage(telegramId,
                 "🔒 Referrals only count for new subscribers, so your referrer can't be changed anymore.\n\n" +
@@ -702,7 +705,7 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task MigrateClientEmailAsync(PanelClient client, string email, long? referrerTgId,
         string? referrerEmail, CancellationToken cancellationToken)
     {
-        if (ReferralService.HasConvertedToPaid(client))
+        if (ReferralService.HasConvertedToPaid(client.Enable, client.ExpiryTime, DateTimeOffset.UtcNow, client.Comment))
         {
             await _panelClient.UpdateClientAsync(client.Email,
                 client.ToUpdateRequest() with { Email = email }, cancellationToken);
@@ -882,7 +885,7 @@ public sealed class TelegramHandlers : IUpdateHandler
     {
         var userDetails = await GetUserDetails(telegramId, cancellationToken);
 
-        if (userDetails is not null && !ReferralService.IsValidEmail(userDetails.Username))
+        if (userDetails is not null && !EmailAddress.IsValid(userDetails.Username))
         {
             _logger.LogInformation(
                 "Account without a valid email opened referrals, requiring one-time email update. TelegramId: {TelegramId}",
@@ -1001,7 +1004,7 @@ public sealed class TelegramHandlers : IUpdateHandler
             return;
         }
 
-        if (!ReferralService.IsValidEmail(own.Client.Email))
+        if (!EmailAddress.IsValid(own.Client.Email))
         {
             _logger.LogInformation(
                 "Account without a valid email started a friend invite, requiring one-time email update. TelegramId: {TelegramId}",
@@ -1010,7 +1013,7 @@ public sealed class TelegramHandlers : IUpdateHandler
             _sessionStore.Get(telegramId).FriendInviteActive = false;
 
             await StartEmailRegistration(botClient, telegramId, null,
-                !ReferralService.HasConvertedToPaid(own.Client), true, cancellationToken,
+                !ReferralService.HasConvertedToPaid(own.Client.Enable, own.Client.ExpiryTime, DateTimeOffset.UtcNow, own.Client.Comment), true, cancellationToken,
                 "🎁 To share your invite link, set your login email address below.\n" +
                 "This is a one-time update — afterwards the link is yours to share.\n\n");
 
@@ -1031,9 +1034,9 @@ public sealed class TelegramHandlers : IUpdateHandler
         CancellationToken cancellationToken)
     {
         var session = _sessionStore.Get(telegramId);
-        var email = ReferralService.NormalizeEmail(text);
+        var email = EmailAddress.Normalize(text);
 
-        if (!ReferralService.IsValidEmail(email))
+        if (!EmailAddress.IsValid(email))
         {
             await botClient.SendMessage(telegramId,
                 "❌ That doesn't look like a valid email address. Please try again (/start to cancel):",
@@ -1263,7 +1266,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         if (!string.IsNullOrWhiteSpace(from?.Username))
             comment = ReferralService.AppendTag(comment, $"@{from.Username}");
 
-        if (ReferralService.HasEverBeenProvisioned(invited))
+        if (ReferralService.HasEverBeenProvisioned(invited.Enable, invited.ExpiryTime, DateTimeOffset.UtcNow, invited.Comment))
         {
             // Already-paid accounts can never earn a referral bonus (new-subscribers
             // only), so void any carried attribution instead of letting it linger
@@ -1282,11 +1285,11 @@ public sealed class TelegramHandlers : IUpdateHandler
         // one at claim time. Rows that already carry a trial keep it — unless it
         // already expired before the friend claimed, in which case restart it so
         // a late claimer still gets the promised trial window.
-        var startTrial = !ReferralService.HasConvertedToPaid(invited)
+        var startTrial = !ReferralService.HasConvertedToPaid(invited.Enable, invited.ExpiryTime, DateTimeOffset.UtcNow, invited.Comment)
             && !ReferralService.HasTrialTag(invited.Comment)
             && !invited.Enable;
 
-        var restartExpiredTrial = !ReferralService.HasConvertedToPaid(invited)
+        var restartExpiredTrial = !ReferralService.HasConvertedToPaid(invited.Enable, invited.ExpiryTime, DateTimeOffset.UtcNow, invited.Comment)
             && ReferralService.HasTrialTag(invited.Comment)
             && invited.ExpiryTime <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             && _telegramOptions.TrialDurationHours > 0;
@@ -1343,7 +1346,7 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         var hasReferrer = ReferralService.TryParseReferredBy(invited.Comment, out _, out _);
 
-        if (!hasReferrer && !ReferralService.HasConvertedToPaid(invited))
+        if (!hasReferrer && !ReferralService.HasConvertedToPaid(invited.Enable, invited.ExpiryTime, DateTimeOffset.UtcNow, invited.Comment))
         {
             session.RegistrationStep = RegistrationStep.AwaitingReferrer;
             session.CollectReferrer = true;
@@ -1389,7 +1392,7 @@ public sealed class TelegramHandlers : IUpdateHandler
             || legacy.TgId != telegramId
             || !ReferralService.IsLegacyEmail(legacy.Email)
             || legacy.Email.Equals(claimedEmail, StringComparison.OrdinalIgnoreCase)
-            || ReferralService.HasConvertedToPaid(legacy))
+            || ReferralService.HasConvertedToPaid(legacy.Enable, legacy.ExpiryTime, DateTimeOffset.UtcNow, legacy.Comment))
             return;
 
         var tombstone = $"{legacy.Email}.merged-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
@@ -1717,9 +1720,9 @@ public sealed class TelegramHandlers : IUpdateHandler
                 return;
 
             case AdminAction.RegisterTarget:
-                var newEmail = ReferralService.NormalizeEmail(input);
+                var newEmail = EmailAddress.Normalize(input);
 
-                if (!ReferralService.IsValidEmail(newEmail))
+                if (!EmailAddress.IsValid(newEmail))
                 {
                     await botClient.SendMessage(telegramId,
                         "❌ That doesn't look like a valid email address. Please try again.",
@@ -1761,9 +1764,9 @@ public sealed class TelegramHandlers : IUpdateHandler
                     return;
                 }
 
-                var candidate = ReferralService.NormalizeEmail(input);
+                var candidate = EmailAddress.Normalize(input);
 
-                if (!ReferralService.IsValidEmail(candidate))
+                if (!EmailAddress.IsValid(candidate))
                 {
                     await botClient.SendMessage(telegramId,
                         "❌ That doesn't look like a valid email address. Please try again, or /skip.",
@@ -1912,9 +1915,9 @@ public sealed class TelegramHandlers : IUpdateHandler
                     return;
                 }
 
-                var newAddress = ReferralService.NormalizeEmail(input);
+                var newAddress = EmailAddress.Normalize(input);
 
-                if (!ReferralService.IsValidEmail(newAddress))
+                if (!EmailAddress.IsValid(newAddress))
                 {
                     await botClient.SendMessage(telegramId,
                         "❌ That doesn't look like a valid email address. Please try again.",

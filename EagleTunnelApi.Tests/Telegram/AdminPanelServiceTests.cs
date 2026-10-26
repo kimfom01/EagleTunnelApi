@@ -1,5 +1,6 @@
 using System.Text.Json;
 using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Domain.Referrals;
 using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Telegram;

@@ -1,6 +1,4 @@
-using EagleTunnelApi.PanelApi.Models;
-
-namespace EagleTunnelApi.Telegram;
+namespace EagleTunnelApi.Domain.Subscriptions;
 
 public enum SubscriptionStatus
 {
@@ -12,15 +10,16 @@ public enum SubscriptionStatus
 
 public static class SubscriptionFormatter
 {
-    public static SubscriptionStatus DeriveStatus(PanelClient client, long usedTraffic)
+    public static SubscriptionStatus DeriveStatus(bool enable, long expiryTimeMs, long totalBytes, long usedTraffic,
+        DateTimeOffset now)
     {
-        if (!client.Enable) return SubscriptionStatus.Disabled;
+        if (!enable) return SubscriptionStatus.Disabled;
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var nowMs = now.ToUnixTimeMilliseconds();
 
-        if (client.ExpiryTime > 0 && client.ExpiryTime < now) return SubscriptionStatus.Expired;
+        if (expiryTimeMs > 0 && expiryTimeMs < nowMs) return SubscriptionStatus.Expired;
 
-        if (client.TotalGB > 0 && usedTraffic >= client.TotalGB) return SubscriptionStatus.Limited;
+        if (totalBytes > 0 && usedTraffic >= totalBytes) return SubscriptionStatus.Limited;
 
         return SubscriptionStatus.Active;
     }
