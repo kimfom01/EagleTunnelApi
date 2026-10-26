@@ -235,6 +235,8 @@ Unimplemented work is tracked in [FEATURES.md](FEATURES.md):
 
 - Clean architecture refactor (Domain/Application/Infrastructure/Api) so new features land behind explicit boundaries.
 - Email-first Vite + React web app with PostgreSQL-backed auth/identity/audit; no Telegram required to log in.
+- PostgreSQL panel mirror with 10-minute reconciliation, manual refresh, conflict alerts, and comment-state migration.
+- Telegram `Panel Management` v1: default inbounds, sync status, and conflicts.
 - Credits ledger and eventual Tribute replacement.
 - Pending manual verification and operational checks.
 
