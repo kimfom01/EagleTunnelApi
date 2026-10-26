@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\EagleTunnelApi.Application\EagleTunnelApi.Application.csproj" />
+        <ProjectReference Include="..\EagleTunnelApi.Domain\EagleTunnelApi.Domain.csproj" />
+    </ItemGroup>
+
+</Project>
