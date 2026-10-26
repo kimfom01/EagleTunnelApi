@@ -82,6 +82,12 @@ docker build -t eagletunnelapi .
 docker run --env-file .env -p 8080:8080 eagletunnelapi
 ```
 
+### Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the release checklist, current environment variables, and the infrastructure and
+settings required by each roadmap slice. R0 and R1 are behavior-preserving and need no new configuration; later slices add
+PostgreSQL, panel sync, email, or SPA prerequisites as documented there.
+
 ## Scripts & CLI Commands
 
 The following `dotnet` commands are commonly used:
@@ -102,9 +108,10 @@ Configuration is handled via standard ASP.NET Core mechanisms (`appsettings.json
 | `Panel:ApiKey`                | `Panel__ApiKey`                | API token for authenticating with the Panel.                                                 |
 | `Telegram:BotToken`           | `Telegram__BotToken`           | Bot token from @BotFather.                                                                   |
 | `Telegram:SupportUrl`         | `Telegram__SupportUrl`         | Support contact link shown by `/help`.                                                       |
+| `Telegram:TributeSubscriptionUrl` | `Telegram__TributeSubscriptionUrl` | Subscription/checkout link shown in menus and reminders.                                |
 | `Telegram:DefaultInboundIds`  | `Telegram__DefaultInboundIds`  | Comma-separated panel inbound ids new clients are attached to. Must match the panel — the panel rejects the whole add call if any id no longer exists. |
 | `Telegram:AdminIds`           | `Telegram__AdminIds`           | Comma-separated Telegram ids allowed to use `/admin`.                                        |
-| `Telegram:WebhookPath`        | `Telegram__WebhookPath`        | Path of the Telegram webhook endpoint (default `/webhooks/telegram`).                        |
+| `Telegram:WebhookPath`        | `Telegram__WebhookPath`        | Path of the Telegram webhook endpoint. Set explicitly; the code fallback is `/webhooks/telegram`, but `appsettings.json` ships an empty value. |
 | `Telegram:WebhookUrl`         | `Telegram__WebhookUrl`         | Public base URL used to register the webhook (**required in production**).                   |
 | `Telegram:WebhookSecretToken` | `Telegram__WebhookSecretToken` | Secret token checked on every Telegram webhook request.                                      |
 | `Telegram:BotUsername`        | `Telegram__BotUsername`        | Bot username without `@` (e.g. `EagleTunnelBot`), used to build referral links.              |
@@ -122,6 +129,7 @@ Panel__BaseUri=https://panel.example.com/admin
 Panel__ApiKey=your-panel-api-token
 Telegram__BotToken=123456:ABC-your-bot-token
 Telegram__SupportUrl=https://t.me/support
+Telegram__TributeSubscriptionUrl=https://tribute.example.com/your-subscription
 Telegram__DefaultInboundIds=1,2
 Telegram__BotUsername=YourBotName
 ```

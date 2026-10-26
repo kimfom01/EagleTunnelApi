@@ -7,6 +7,9 @@ them if the old detail is ever needed.
 
 > **Status:** planning only. Nothing in this document has been built unless explicitly marked otherwise.
 >
+> **Deployment:** per-slice infrastructure, environment variables, and release checks live in
+> [DEPLOYMENT.md](DEPLOYMENT.md).
+>
 > **Last updated:** 2026-10-26
 
 ## Status legend
