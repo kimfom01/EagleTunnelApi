@@ -1,8 +1,8 @@
 using System.Text.Json.Serialization;
 
-namespace EagleTunnelApi.PanelApi.Models;
+namespace EagleTunnelApi.Infrastructure.PanelApi.Models;
 
-public record PanelClientSummary(
+public sealed record PanelClientSummaryDto(
     [property: JsonPropertyName("id")] int Id,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("subId")] string? SubId,
@@ -15,10 +15,10 @@ public record PanelClientSummary(
     [property: JsonPropertyName("inboundIds")]
     List<int>? InboundIds,
     [property: JsonPropertyName("traffic")]
-    PanelTrafficSummary? Traffic
+    PanelTrafficSummaryDto? Traffic
 );
 
-public record PanelTrafficSummary(
+public sealed record PanelTrafficSummaryDto(
     [property: JsonPropertyName("up")] long Up,
     [property: JsonPropertyName("down")] long Down,
     [property: JsonPropertyName("enable")] bool Enable

@@ -1,4 +1,4 @@
-using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Telegram;
 
 namespace EagleTunnelApi.Tests.Helpers;

@@ -1,8 +1,9 @@
 using System.Net;
 using System.Text.Json;
 using EagleTunnelApi.Configuration;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Infrastructure.PanelApi;
+using EagleTunnelApi.Infrastructure.PanelApi.Models;
+using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -19,12 +20,12 @@ public class PanelInboundPreflightServiceTests
         CreateService(IEnumerable<int> availableInboundIds, params int[] configuredInboundIds)
     {
         var inbounds = availableInboundIds
-            .Select(id => new PanelInboundOption(id, $"Inbound {id}", $"tag-{id}", "vless", 443, true))
+            .Select(id => new PanelInboundOptionDto(id, $"Inbound {id}", $"tag-{id}", "vless", 443, true))
             .ToList();
 
-        var json = JsonSerializer.Serialize(new PanelApiResponse<List<PanelInboundOption>>(true, "ok", inbounds));
+        var json = JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelInboundOptionDto>>(true, "ok", inbounds));
 
-        var panelClient = new PanelApiClient(
+        var panelClient = new PanelApiGateway(
             new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
@@ -32,7 +33,7 @@ public class PanelInboundPreflightServiceTests
             {
                 BaseAddress = new Uri(PanelBaseUri)
             },
-            NullLogger<PanelApiClient>.Instance);
+            NullLogger<PanelApiGateway>.Instance);
 
         var logger = new CapturingLogger<PanelInboundPreflightService>();
 
@@ -71,12 +72,12 @@ public class PanelInboundPreflightServiceTests
     [Fact]
     public async Task Check_PanelFailure_LogsWarningAndDoesNotThrow()
     {
-        var panelClient = new PanelApiClient(
+        var panelClient = new PanelApiGateway(
             new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)))
             {
                 BaseAddress = new Uri(PanelBaseUri)
             },
-            NullLogger<PanelApiClient>.Instance);
+            NullLogger<PanelApiGateway>.Instance);
 
         var logger = new CapturingLogger<PanelInboundPreflightService>();
         var service = new PanelInboundPreflightService(panelClient,

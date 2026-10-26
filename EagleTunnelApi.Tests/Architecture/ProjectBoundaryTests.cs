@@ -6,6 +6,7 @@ namespace EagleTunnelApi.Tests.Architecture;
 
 public class ProjectBoundaryTests
 {
+    private static readonly Assembly ApiAssembly = Assembly.Load("EagleTunnelApi");
     private static readonly Assembly DomainAssembly = Assembly.Load("EagleTunnelApi.Domain");
     private static readonly Assembly ApplicationAssembly = Assembly.Load("EagleTunnelApi.Application");
     private static readonly Assembly InfrastructureAssembly = Assembly.Load("EagleTunnelApi.Infrastructure");
@@ -18,6 +19,8 @@ public class ProjectBoundaryTests
         "EagleTunnelApi.Telegram",
         "EagleTunnelApi.Webhook"
     ];
+
+    private const string PanelWireModelsNamespace = "EagleTunnelApi.Infrastructure.PanelApi.Models";
 
     private static readonly string[] ForbiddenTechnicalNamespaces =
     [
@@ -56,6 +59,12 @@ public class ProjectBoundaryTests
     public void Infrastructure_does_not_depend_on_api()
     {
         AssertNoDependency(InfrastructureAssembly, ApiLayerNamespaces);
+    }
+
+    [Fact]
+    public void Api_does_not_depend_on_panel_wire_models()
+    {
+        AssertNoDependency(ApiAssembly, [PanelWireModelsNamespace]);
     }
 
     private static void AssertNoDependency(Assembly assembly, string[] forbiddenNamespaces)

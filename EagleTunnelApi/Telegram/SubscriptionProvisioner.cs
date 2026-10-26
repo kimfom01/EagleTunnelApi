@@ -1,8 +1,6 @@
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Referrals;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
-using EagleTunnelApi.Webhook.Exceptions;
+using EagleTunnelApi.Application.Panel;
 using Microsoft.Extensions.Options;
 
 namespace EagleTunnelApi.Telegram;
@@ -16,7 +14,7 @@ public interface ISubscriptionProvisioner
 
 public class SubscriptionProvisioner(
     ILogger<SubscriptionProvisioner> logger,
-    IPanelClient panelClient,
+    IPanelGateway panelClient,
     IOptions<TelegramOptions> telegramOptions) : ISubscriptionProvisioner
 {
     private readonly TelegramOptions _telegramOptions = telegramOptions.Value;
@@ -50,11 +48,8 @@ public class SubscriptionProvisioner(
         logger.LogWarning("Creating Missing Client At Panel. TelegramId: {TelegramId}", telegramId);
 
         var email = $"tg{telegramId}";
-        var createRequest = new CreateClientPayload(
-            PanelClientDefaults.CreateClient(email, true, expiryTimeMs, telegramId,
-                $"Created from subscription: {subscriptionName}"),
-            _telegramOptions.DefaultInboundIds.ToList()
-        );
+        var createRequest = PanelClientDefaults.CreateClient(email, true, expiryTimeMs, telegramId,
+            $"Created from subscription: {subscriptionName}", _telegramOptions.DefaultInboundIds);
 
         await panelClient.AddClientAsync(createRequest, cancellationToken);
 

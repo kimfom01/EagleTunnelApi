@@ -1,8 +1,8 @@
 using System.Text.Json;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Referrals;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Infrastructure.PanelApi;
+using EagleTunnelApi.Infrastructure.PanelApi.Models;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,19 +17,19 @@ public class AdminPanelServiceTests
     private const int BonusDays = 30;
     private const long DayMs = 24L * 60 * 60 * 1000;
 
-    private static PanelClient Client(string email, long tgId, bool enable, long expiryMs, string? comment)
+    private static PanelClientDto Client(string email, long tgId, bool enable, long expiryMs, string? comment)
     {
-        return new PanelClient("uuid-1", email, enable, expiryMs, tgId, 100L * 1024 * 1024 * 1024, comment,
+        return new PanelClientDto("uuid-1", email, enable, expiryMs, tgId, 100L * 1024 * 1024 * 1024, comment,
             0, 2, "monthly", 1, 0, "auto", "sub1", "xtls-rprx-vision", 1, null);
     }
 
-    private static PanelClient ActiveClient(string email = "user@example.com", long tgId = 12345)
+    private static PanelClientDto ActiveClient(string email = "user@example.com", long tgId = 12345)
     {
         return Client(email, tgId, true, DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeMilliseconds(),
             $"Telegram ID: {tgId}");
     }
 
-    private static PanelClient TrialReferee()
+    private static PanelClientDto TrialReferee()
     {
         return Client("newbie@example.com", 111, true,
             DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
@@ -37,27 +37,27 @@ public class AdminPanelServiceTests
             "Trial until 2099-01-01 00:00 UTC");
     }
 
-    private static string ClientListJson(PanelClient client)
+    private static string ClientListJson(PanelClientDto client)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
-            new List<PanelClientResponse> { new(client, null, new List<int> { 1 }, 0) }));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientResponseDto>>(true, "ok",
+            new List<PanelClientResponseDto> { new(client, null, new List<int> { 1 }, 0) }));
     }
 
-    private static string ClientByEmailJson(PanelClient client)
+    private static string ClientByEmailJson(PanelClientDto client)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<PanelClientResponse>(true, "ok",
-            new PanelClientResponse(client, null, new List<int> { 1 }, 0)));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<PanelClientResponseDto>(true, "ok",
+            new PanelClientResponseDto(client, null, new List<int> { 1 }, 0)));
     }
 
-    private static string SummaryListJson(params PanelClientSummary[] summaries)
+    private static string SummaryListJson(params PanelClientSummaryDto[] summaries)
     {
         return JsonSerializer.Serialize(
-            new PanelApiResponse<List<PanelClientSummary>>(true, "ok", summaries.ToList()));
+            new PanelApiResponseDto<List<PanelClientSummaryDto>>(true, "ok", summaries.ToList()));
     }
 
     private static string SuccessJson()
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<object>(true, "ok", null));
     }
 
     private static (AdminPanelService Service, FakeTelegramBotClient Bot, List<HttpRequestMessage> Requests)
@@ -77,14 +77,14 @@ public class AdminPanelServiceTests
             WebhookPath = "/webhooks/telegram"
         });
 
-        var panelClient = new PanelApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        var panelClient = new PanelApiGateway(new HttpClient(new StubHttpMessageHandler(request =>
         {
             requests.Add(request);
             return responder(request);
         }))
         {
             BaseAddress = new Uri(BaseUri)
-        }, NullLogger<PanelApiClient>.Instance);
+        }, NullLogger<PanelApiGateway>.Instance);
 
         var service = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient, bot, options);
 
@@ -309,7 +309,7 @@ public class AdminPanelServiceTests
 
             if (path == "/admin/panel/api/clients/list")
                 return StubHttpMessageHandler.Json(SummaryListJson(
-                    new PanelClientSummary(1, "friend-of@example.com", "sub1", "uuid-1", 100,
+                    new PanelClientSummaryDto(1, "friend-of@example.com", "sub1", "uuid-1", 100,
                         referee.ExpiryTime, true, new List<int> { 1 }, null)));
 
             if (path == "/admin/panel/api/clients/get/friend-of@example.com")
@@ -488,7 +488,7 @@ public class AdminPanelServiceTests
 
             if (path == "/admin/panel/api/clients/list")
                 return StubHttpMessageHandler.Json(SummaryListJson(
-                    new PanelClientSummary(1, "newbie@example.com", "sub1", "uuid-1", 100, referee.ExpiryTime,
+                    new PanelClientSummaryDto(1, "newbie@example.com", "sub1", "uuid-1", 100, referee.ExpiryTime,
                         true, new List<int> { 1 }, null)));
 
             if (path == "/admin/panel/api/clients/get/newbie@example.com")
@@ -616,7 +616,7 @@ public class AdminPanelServiceTests
 
             if (path == "/admin/panel/api/clients/list")
                 return StubHttpMessageHandler.Json(SummaryListJson(
-                    new PanelClientSummary(1, "newbie@example.com", "sub1", "uuid-1", 100, referee.ExpiryTime,
+                    new PanelClientSummaryDto(1, "newbie@example.com", "sub1", "uuid-1", 100, referee.ExpiryTime,
                         true, new List<int> { 1 }, null)));
 
             if (path == "/admin/panel/api/clients/get/newbie@example.com")
@@ -661,11 +661,11 @@ public class AdminPanelServiceTests
 
             if (path == "/admin/panel/api/clients/list")
                 return StubHttpMessageHandler.Json(SummaryListJson(
-                    new PanelClientSummary(1, "newbie@example.com", "s1", "u1", 100, trial.ExpiryTime, true,
+                    new PanelClientSummaryDto(1, "newbie@example.com", "s1", "u1", 100, trial.ExpiryTime, true,
                         new List<int> { 1 }, null),
-                    new PanelClientSummary(2, "paid@example.com", "s2", "u2", 100, paid.ExpiryTime, true,
+                    new PanelClientSummaryDto(2, "paid@example.com", "s2", "u2", 100, paid.ExpiryTime, true,
                         new List<int> { 1 }, null),
-                    new PanelClientSummary(3, "plain@example.com", "s3", "u3", 100, plain.ExpiryTime, true,
+                    new PanelClientSummaryDto(3, "plain@example.com", "s3", "u3", 100, plain.ExpiryTime, true,
                         new List<int> { 1 }, null)));
 
             if (path == "/admin/panel/api/clients/get/newbie@example.com")

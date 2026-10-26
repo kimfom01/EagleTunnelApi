@@ -1,5 +1,5 @@
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Domain.Subscriptions;
-using EagleTunnelApi.PanelApi.Models;
 using EagleTunnelApi.Telegram;
 using Xunit;
 
@@ -14,7 +14,7 @@ public class UserDetailsTests
 
         var client = new PanelClient("uuid-x", "user@example.com", true, expiryMs, 123,
             100L * 1024 * 1024 * 1024, "c", 3, 2, "monthly", 1, 30, "auto", "sub777", "xtls-rprx-vision", 7, null);
-        var response = new PanelClientResponse(client, null, new List<int> { 1 }, 42L * 1024 * 1024);
+        var response = new PanelClientDetails(client, null, new List<int> { 1 }, 42L * 1024 * 1024);
 
         var details = UserDetails.From(response, "https://panel.example.com");
 

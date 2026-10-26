@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace EagleTunnelApi.PanelApi;
+namespace EagleTunnelApi.Application.Panel;
 
 public static class RandomString
 {

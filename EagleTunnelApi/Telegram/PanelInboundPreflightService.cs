@@ -1,7 +1,8 @@
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Configuration;
 using Microsoft.Extensions.Options;
 
-namespace EagleTunnelApi.PanelApi;
+namespace EagleTunnelApi.Telegram;
 
 /// <summary>
 /// Checks at startup that every configured default inbound id still exists on
@@ -10,7 +11,7 @@ namespace EagleTunnelApi.PanelApi;
 /// missing, so a stale id silently breaks all new provisioning.
 /// </summary>
 public sealed class PanelInboundPreflightService(
-    IPanelClient panelClient,
+    IPanelGateway panelClient,
     IOptions<TelegramOptions> telegramOptions,
     ILogger<PanelInboundPreflightService> logger) : BackgroundService
 {

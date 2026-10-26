@@ -575,7 +575,7 @@ Each phase is a separately verifiable, commit-sized slice. No behavior change un
 |---|---|---|
 | R0 ✅ | Create Domain/Application/Infrastructure projects, add project references, add architecture tests. Move no production code. | Solution builds; all existing tests pass; architecture tests fail on an intentional violation. |
 | R1 ✅ | Move pure Domain types and their tests (`SubscriptionStatus`, formatter, referral parsing/policies, email normalization). | Existing behavior unchanged; tests moved/updated; no panel DTOs in Domain. |
-| R2 | Introduce `IPanelGateway` and application models; move `PanelApiClient` + DTOs to Infrastructure; map at the boundary. | No panel DTOs outside Infrastructure; not-found vs unavailable preserved; tests pass. |
+| R2 ✅ | Introduce `IPanelGateway` and application models; move `PanelApiClient` + DTOs to Infrastructure; map at the boundary. | No panel DTOs outside Infrastructure; not-found vs unavailable preserved; tests pass. |
 | R3a | EF Core/Postgres foundation: `AppDbContext`, configurations, migrations, startup migration runner, Testcontainers harness, auth/session/outbox/audit/panel-mirror schema. No HTTP endpoints. | Migrations apply to a clean Postgres; schema tests cover unique/partial indexes and `xmin`; no endpoints exposed. |
 | R3b | Comment backfill + panel directory/sync/conflicts + admin sync/default-inbound menu. | Initial backfill is idempotent; sync is locked and observable; conflicts are persisted and alerted; default inbounds come from Postgres. |
 | R3c | Email outbox processor + email-code auth/identity use cases. No HTTP endpoints. | Code + outbox commit atomically; claim/retry/dead-letter tests pass; auth use cases covered against Postgres. |
@@ -584,9 +584,9 @@ Each phase is a separately verifiable, commit-sized slice. No behavior change un
 | R6 | Add web auth endpoints + SPA shell + DB-backed dashboard + manual refresh. | Login, session, dashboard, refresh, and logout work end to end; no Telegram requirement. |
 | R7 | Credits ledger (Section 3). | Ledger design implemented behind use cases; panel projection reconciled. |
 
-R0–R1 are implemented: the Domain/Application/Infrastructure projects, NetArchTest boundary tests, and the pure domain
-types (subscription status/formatter, referral/trial/credit tag policy, email normalization) are in the solution.
-R2–R7 remain unbuilt.
+R0–R2 are implemented: the Domain/Application/Infrastructure projects, NetArchTest boundary tests, the pure domain types
+(subscription status/formatter, referral/trial/credit tag policy, email normalization), and the panel gateway are in the
+solution. R3–R7 remain unbuilt.
 
 Sequencing:
 

@@ -1,8 +1,9 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Infrastructure.PanelApi;
 using EagleTunnelApi.Logging;
-using EagleTunnelApi.PanelApi;
 using EagleTunnelApi.ServiceDefaults;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Webhook.Events;
@@ -62,7 +63,7 @@ builder.Services.AddScoped<IVerifier, Verifier>();
 
 builder.Services.AddTransient<OutgoingRequestLoggingHandler>();
 
-builder.Services.AddHttpClient<IPanelClient, PanelApiClient>((sp, client) =>
+builder.Services.AddHttpClient<IPanelGateway, PanelApiGateway>((sp, client) =>
 {
     var panelOptions = sp.GetRequiredService<IOptions<PanelOptions>>().Value;
 

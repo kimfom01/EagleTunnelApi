@@ -1,6 +1,6 @@
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Domain.Referrals;
 using EagleTunnelApi.Domain.Subscriptions;
-using EagleTunnelApi.PanelApi.Models;
 
 namespace EagleTunnelApi.Telegram;
 
@@ -18,13 +18,13 @@ public sealed record UserDetails(
     string SubscriptionUrl,
     string TrafficReset,
     int TrafficResetDay,
-    List<int>? InboundIds,
+    IReadOnlyList<int>? InboundIds,
     long UsedTrafficBytes,
     bool Enable,
     long ExpiryTimeMs,
     string? Comment)
 {
-    public static UserDetails? From(PanelClientResponse? response, string panelBaseUri)
+    public static UserDetails? From(PanelClientDetails? response, string panelBaseUri)
     {
         if (response is null) return null;
 
