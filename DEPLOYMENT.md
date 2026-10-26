@@ -3,24 +3,27 @@
 This is the operational companion to [FEATURES.md](FEATURES.md). It explains what must exist before each roadmap slice can
 be deployed, which environment variables are active today, and which settings are still planned.
 
-**Current code:** R0–R1 — clean architecture skeleton and the pure Domain move. Both are behavior-preserving.
+**Current code:** R0–R2 — clean architecture skeleton, the pure Domain move, and the panel gateway. All are behavior-preserving.
 **Last updated:** 2026-10-26
 
 > **Planned settings are not read by the current code.** Keys marked *planned* below are proposals from
 > [FEATURES.md](FEATURES.md). Do not set them expecting an effect until the matching slice is implemented and this guide
 > is updated.
 
-## 1. Current deployability (R0–R1)
+## 1. Current deployability (R0–R2)
 
-R0 and R1 do not change routes, configuration, database schema, or external dependencies. They move pure logic into
-`EagleTunnelApi.Domain` and add project references plus architecture tests.
+R0–R2 do not change routes, configuration, database schema, or external dependencies. R0/R1 move pure logic into
+`EagleTunnelApi.Domain`; R2 moves the panel adapter and wire DTOs into Infrastructure and exposes `IPanelGateway` to the
+application.
 
 - No new environment variables.
 - No database or migrations.
 - No new external service.
 - No new container or volume.
-- Existing Telegram, Tribute, and 3X-UI panel behavior is unchanged.
-- The Dockerfile copies the new project files before restore, so the image builds correctly.
+- Existing Telegram, Tribute, and 3X-UI panel behavior is unchanged on success paths.
+- The panel adapter now returns `null` only for a definitive not-found response and throws for transport/server failures.
+- An unavailable panel now aborts an admin email change instead of assuming the new address is free.
+- The Dockerfile copies the project files before restore, so the image builds correctly.
 
 Recommended release position: deploy the image built from the current commit only after the checklist in §3 passes.
 
@@ -118,10 +121,10 @@ promoting a build.
 | **R6 web auth + SPA** | Only with prerequisites | Everything from R3a–R3c, plus the Vite build output in `wwwroot`, cookie/HTTPS behavior at the proxy, and login/dashboard end-to-end tests without Telegram. |
 | **R7 credits ledger** | No | Schema migrations, ledger reconciliation, payment-provider decisions, and support procedures. |
 
-### R2 — panel gateway
+### R2 — panel gateway ✅
 
-No new environment variables. The risk is behavioral: panel DTOs move behind `IPanelGateway` and request/response mapping
-changes. Deploy only after staging exercises:
+Implemented. No new environment variables. The risk is behavioral: panel DTOs now live behind `IPanelGateway` and
+request/response mapping happens at the adapter boundary. Deploy only after staging exercises:
 
 - client lookup by email and Telegram id;
 - not-found vs panel-unavailable handling;
