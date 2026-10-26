@@ -2,8 +2,8 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using EagleTunnelApi.Configuration;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Infrastructure.PanelApi;
+using EagleTunnelApi.Infrastructure.PanelApi.Models;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,16 +16,16 @@ public class ExpiryReminderServiceTests
 {
     private const string PanelBaseUri = "https://panel.test";
 
-    private static PanelClientSummary Summary(string email, DateTimeOffset expiry, bool enable = true)
+    private static PanelClientSummaryDto Summary(string email, DateTimeOffset expiry, bool enable = true)
     {
-        return new PanelClientSummary(
+        return new PanelClientSummaryDto(
             1, email, "sub1", "uuid-1", 100,
             expiry.ToUnixTimeMilliseconds(), enable, null, null);
     }
 
-    private static PanelClient FullClient(string email, long tgId, string? comment)
+    private static PanelClientDto FullClient(string email, long tgId, string? comment)
     {
-        return new PanelClient(
+        return new PanelClientDto(
             "uuid-1", email, true,
             DateTimeOffset.UtcNow.AddDays(2).ToUnixTimeMilliseconds(),
             tgId, 100, comment, 0, 2,
@@ -33,20 +33,20 @@ public class ExpiryReminderServiceTests
             "sub1", "xtls-rprx-vision", 1, null);
     }
 
-    private static string ListJson(params PanelClientSummary[] summaries)
+    private static string ListJson(params PanelClientSummaryDto[] summaries)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok", summaries.ToList()));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientSummaryDto>>(true, "ok", summaries.ToList()));
     }
 
-    private static string ClientByEmailJson(PanelClient client)
+    private static string ClientByEmailJson(PanelClientDto client)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<PanelClientResponse>(true, "ok",
-            new PanelClientResponse(client, null, new List<int> { 1 }, 0)));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<PanelClientResponseDto>(true, "ok",
+            new PanelClientResponseDto(client, null, new List<int> { 1 }, 0)));
     }
 
     private static string SuccessJson()
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<object>(true, "ok", null));
     }
 
     private static HttpResponseMessage Json(string rawJson)
@@ -70,14 +70,14 @@ public class ExpiryReminderServiceTests
             DefaultInboundIds = new[] { 1 }
         });
 
-        var panelClient = new PanelApiClient(
+        var panelClient = new PanelApiGateway(
             new HttpClient(new StubHttpMessageHandler(request =>
                 {
                     requests?.Add(request);
                     return responder(request);
                 }))
             { BaseAddress = new Uri(PanelBaseUri) },
-            NullLogger<PanelApiClient>.Instance);
+            NullLogger<PanelApiGateway>.Instance);
 
         return (new ExpiryReminderService(panelClient, bot, options,
             NullLogger<ExpiryReminderService>.Instance), bot);

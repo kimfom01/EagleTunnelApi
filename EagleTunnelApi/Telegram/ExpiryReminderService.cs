@@ -1,15 +1,13 @@
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Referrals;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
-using EagleTunnelApi.Webhook.Exceptions;
+using EagleTunnelApi.Application.Panel;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
 
 namespace EagleTunnelApi.Telegram;
 
 public sealed class ExpiryReminderService(
-    IPanelClient panelClient,
+    IPanelGateway panelClient,
     ITelegramBotClient botClient,
     IOptions<TelegramOptions> telegramOptions,
     ILogger<ExpiryReminderService> logger) : BackgroundService

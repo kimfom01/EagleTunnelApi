@@ -1,15 +1,16 @@
 using System.Text.Json.Serialization;
 
-namespace EagleTunnelApi.PanelApi.Models;
+namespace EagleTunnelApi.Infrastructure.PanelApi.Models;
 
-public record UpdateClientRequest(
+public sealed record PanelClientDto(
+    [property: JsonPropertyName("uuid")] string Uuid,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("enable")] bool Enable,
     [property: JsonPropertyName("expiryTime")]
     long ExpiryTime,
+    [property: JsonPropertyName("tgId")] long TgId,
     [property: JsonPropertyName("totalGB")]
     long TotalGB,
-    [property: JsonPropertyName("tgId")] long TgId,
     [property: JsonPropertyName("comment")]
     string? Comment,
     [property: JsonPropertyName("limitIp")]
@@ -25,6 +26,7 @@ public record UpdateClientRequest(
     string? Security,
     [property: JsonPropertyName("subId")] string? SubId,
     [property: JsonPropertyName("flow")] string? Flow,
+    [property: JsonPropertyName("id")] int Id,
     [property: JsonPropertyName("inboundIds")]
     List<int>? InboundIds
 );

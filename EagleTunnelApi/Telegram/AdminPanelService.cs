@@ -1,8 +1,6 @@
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Referrals;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
-using EagleTunnelApi.Webhook.Exceptions;
+using EagleTunnelApi.Application.Panel;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Types.Enums;
@@ -61,7 +59,7 @@ public interface IAdminPanelService
 
 public class AdminPanelService(
     ILogger<AdminPanelService> logger,
-    IPanelClient panelClient,
+    IPanelGateway panelClient,
     ITelegramBotClient botClient,
     IOptions<TelegramOptions> telegramOptions) : IAdminPanelService
 {
@@ -195,14 +193,15 @@ public class AdminPanelService(
     {
         var client = await RequireClient(oldEmail, cancellationToken);
 
-        PanelClientResponse? clash = null;
+        PanelClientDetails? clash = null;
         try
         {
             clash = await panelClient.GetClientByEmailAsync(newEmail, cancellationToken);
         }
         catch (PanelApiException ex)
         {
-            logger.LogWarning(ex, "Email clash check failed, assuming available. Email: {Email}", newEmail);
+            logger.LogWarning(ex, "Email clash check failed; aborting email change. Email: {Email}", newEmail);
+            throw;
         }
 
         if (clash?.Client is not null)

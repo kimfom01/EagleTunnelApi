@@ -1,16 +1,27 @@
+using System.Net.Http.Json;
 using System.Text.Json;
-using EagleTunnelApi.PanelApi.Models;
-using EagleTunnelApi.Webhook.Exceptions;
+using EagleTunnelApi.Application.Panel;
+using EagleTunnelApi.Infrastructure.PanelApi.Models;
+using Microsoft.Extensions.Logging;
 
-namespace EagleTunnelApi.PanelApi;
+namespace EagleTunnelApi.Infrastructure.PanelApi;
 
-public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logger) : IPanelClient
+public sealed class PanelApiGateway(HttpClient httpClient, ILogger<PanelApiGateway> logger) : IPanelGateway
 {
-    public async Task<PanelClientResponse?> GetClientByTelegramIdAsync(long tgId, CancellationToken cancellationToken)
+    private static readonly string[] NotFoundPhrases =
+    [
+        "not found",
+        "does not exist",
+        "no such client",
+        "no client found"
+    ];
+
+    public async Task<PanelClientDetails?> GetClientByTelegramIdAsync(long tgId,
+        CancellationToken cancellationToken)
     {
         logger.LogInformation("Fetching Client From Panel. TelegramId: {TelegramId}", tgId);
 
-        var response = await GetJsonAsync<PanelApiResponse<List<PanelClientResponse>>>(
+        var response = await GetJsonAsync<PanelApiResponseDto<List<PanelClientResponseDto>>>(
             $"/admin/panel/api/clients/get/tgId/{tgId}", cancellationToken);
 
         if (response is null) throw new PanelApiException("Panel returned an empty response");
@@ -35,49 +46,72 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
                 tgId, emails);
         }
 
-        return clientResponses[0];
+        return Map(clientResponses[0]);
     }
 
-    public async Task<PanelClientResponse?> GetClientByEmailAsync(string email, CancellationToken cancellationToken)
+    public async Task<PanelClientDetails?> GetClientByEmailAsync(string email, CancellationToken cancellationToken)
     {
         logger.LogInformation("Fetching Client From Panel. Email: {Email}", email);
 
-        var response = await GetJsonAsync<PanelApiResponse<PanelClientResponse>>(
+        var response = await GetJsonAsync<PanelApiResponseDto<PanelClientResponseDto>>(
             $"/admin/panel/api/clients/get/{email}", cancellationToken);
 
         if (response is null) throw new PanelApiException("Panel returned an empty response");
 
         if (!response.Success)
         {
+            if (IsDefinitiveNotFound(response.Msg))
+            {
+                logger.LogInformation("Client not found for Email: {Email}", email);
+                return null;
+            }
+
             logger.LogError("Panel fetch failed. Email: {Email}, Message: {Msg}", email, response.Msg);
             throw new PanelApiException($"Panel fetch failed: {response.Msg}");
         }
 
-        return response.Obj;
+        return response.Obj is null ? null : Map(response.Obj);
     }
 
-    public async Task AddClientAsync(CreateClientPayload payload, CancellationToken cancellationToken)
+    public async Task AddClientAsync(PanelClientCreate client, CancellationToken cancellationToken)
     {
         logger.LogInformation("Creating Client At Panel. Email: {Email}, InboundIds: {@InboundIds}",
-            payload.Client.Email, payload.InboundIds);
+            client.Email, client.InboundIds);
+
+        var payload = new CreateClientPayloadDto(
+            new CreateClientRequestDto(
+                client.Email,
+                client.Enable,
+                client.ExpiryTime,
+                client.TotalGB,
+                client.TgId,
+                client.Comment,
+                client.LimitHwid,
+                client.TrafficReset,
+                client.TrafficResetDay,
+                client.SubId,
+                client.Password,
+                client.Auth,
+                client.Flow),
+            client.InboundIds.ToList());
 
         await PostAndValidateAsync("/admin/panel/api/clients/add", payload, "Creating client", cancellationToken);
 
-        logger.LogInformation("Successfully Created Client At Panel. Email: {Email}", payload.Client.Email);
+        logger.LogInformation("Successfully Created Client At Panel. Email: {Email}", client.Email);
     }
 
-    public Task UpdateClientAsync(UpdateClientRequest request, CancellationToken cancellationToken)
+    public Task UpdateClientAsync(PanelClientUpdate request, CancellationToken cancellationToken)
     {
         return UpdateClientAsync(request.Email, request, cancellationToken);
     }
 
-    public async Task UpdateClientAsync(string keyEmail, UpdateClientRequest request,
+    public async Task UpdateClientAsync(string keyEmail, PanelClientUpdate request,
         CancellationToken cancellationToken)
     {
         logger.LogInformation("Updating Client At Panel. Email: {Email}", request.Email);
 
-        await PostAndValidateAsync($"/admin/panel/api/clients/update/{keyEmail}", request, "Updating client",
-            cancellationToken);
+        await PostAndValidateAsync($"/admin/panel/api/clients/update/{keyEmail}", ToDto(request),
+            "Updating client", cancellationToken);
 
         logger.LogInformation("Successfully Updated Client At Panel. Email: {Email}", request.Email);
     }
@@ -110,7 +144,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
     {
         logger.LogInformation("Fetching All Clients From Panel");
 
-        var response = await GetJsonAsync<PanelApiResponse<List<PanelClientSummary>>>(
+        var response = await GetJsonAsync<PanelApiResponseDto<List<PanelClientSummaryDto>>>(
             "/admin/panel/api/clients/list", cancellationToken);
 
         if (response is null) throw new PanelApiException("Panel returned an empty response");
@@ -121,18 +155,19 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
             throw new PanelApiException($"Panel fetch failed: {response.Msg}");
         }
 
-        var clients = response.Obj ?? new List<PanelClientSummary>();
+        var clients = (response.Obj ?? []).Select(Map).ToList();
 
         logger.LogInformation("Successfully Fetched All Clients From Panel. Count: {Count}", clients.Count);
 
         return clients;
     }
 
-    public async Task<IReadOnlyList<PanelInboundOption>> GetInboundOptionsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<PanelInboundOption>> GetInboundOptionsAsync(
+        CancellationToken cancellationToken)
     {
         logger.LogInformation("Fetching Inbound Options From Panel");
 
-        var response = await GetJsonAsync<PanelApiResponse<List<PanelInboundOption>>>(
+        var response = await GetJsonAsync<PanelApiResponseDto<List<PanelInboundOptionDto>>>(
             "/admin/panel/api/inbounds/options", cancellationToken);
 
         if (response is null) throw new PanelApiException("Panel returned an empty response");
@@ -143,7 +178,7 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
             throw new PanelApiException($"Panel inbound options fetch failed: {response.Msg}");
         }
 
-        var inbounds = response.Obj ?? new List<PanelInboundOption>();
+        var inbounds = (response.Obj ?? []).Select(Map).ToList();
 
         logger.LogInformation("Successfully Fetched Inbound Options From Panel. Count: {Count}", inbounds.Count);
 
@@ -179,13 +214,13 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
     {
         var responseMessage = await httpClient.PostAsJsonAsync(url, body, cancellationToken);
 
-        PanelApiResponse<object>? apiResponse = null;
+        PanelApiResponseDto<object>? apiResponse = null;
         if (responseMessage.Content.Headers.ContentType?.MediaType?.Contains("json", StringComparison.OrdinalIgnoreCase)
             is true)
             try
             {
                 apiResponse =
-                    await responseMessage.Content.ReadFromJsonAsync<PanelApiResponse<object>>(cancellationToken);
+                    await responseMessage.Content.ReadFromJsonAsync<PanelApiResponseDto<object>>(cancellationToken);
             }
             catch (JsonException)
             {
@@ -199,5 +234,90 @@ public class PanelApiClient(HttpClient httpClient, ILogger<PanelApiClient> logge
                 responseMessage.StatusCode, message);
             throw new PanelApiException($"{action} failed: {message}");
         }
+    }
+
+    private static bool IsDefinitiveNotFound(string? message)
+    {
+        return message is not null && NotFoundPhrases.Any(phrase =>
+            message.Contains(phrase, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static PanelClientDetails Map(PanelClientResponseDto response)
+    {
+        return new PanelClientDetails(Map(response.Client), response.ExternalLinks, response.InboundIds,
+            response.UsedTraffic);
+    }
+
+    private static PanelClient Map(PanelClientDto client)
+    {
+        return new PanelClient(
+            client.Uuid,
+            client.Email,
+            client.Enable,
+            client.ExpiryTime,
+            client.TgId,
+            client.TotalGB,
+            client.Comment,
+            client.LimitIp,
+            client.LimitHwid,
+            client.TrafficReset,
+            client.TrafficResetDay,
+            client.Reset,
+            client.Security,
+            client.SubId,
+            client.Flow,
+            client.Id,
+            client.InboundIds
+        );
+    }
+
+    private static PanelClientSummary Map(PanelClientSummaryDto summary)
+    {
+        return new PanelClientSummary(
+            summary.Id,
+            summary.Email,
+            summary.SubId,
+            summary.Uuid,
+            summary.TotalGB,
+            summary.ExpiryTime,
+            summary.Enable,
+            summary.InboundIds,
+            summary.Traffic is null
+                ? null
+                : new PanelTrafficSummary(summary.Traffic.Up, summary.Traffic.Down, summary.Traffic.Enable)
+        );
+    }
+
+    private static PanelInboundOption Map(PanelInboundOptionDto inbound)
+    {
+        return new PanelInboundOption(
+            inbound.Id,
+            inbound.Remark,
+            inbound.Tag,
+            inbound.Protocol,
+            inbound.Port,
+            inbound.TlsFlowCapable
+        );
+    }
+
+    private static UpdateClientRequestDto ToDto(PanelClientUpdate request)
+    {
+        return new UpdateClientRequestDto(
+            request.Email,
+            request.Enable,
+            request.ExpiryTime,
+            request.TotalGB,
+            request.TgId,
+            request.Comment,
+            request.LimitIp,
+            request.LimitHwid,
+            request.TrafficReset,
+            request.TrafficResetDay,
+            request.Reset,
+            request.Security,
+            request.SubId,
+            request.Flow,
+            request.InboundIds?.ToList()
+        );
     }
 }

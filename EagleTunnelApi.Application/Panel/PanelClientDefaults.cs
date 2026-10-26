@@ -1,6 +1,4 @@
-using EagleTunnelApi.PanelApi.Models;
-
-namespace EagleTunnelApi.PanelApi;
+namespace EagleTunnelApi.Application.Panel;
 
 public static class PanelClientDefaults
 {
@@ -16,10 +14,10 @@ public static class PanelClientDefaults
 
     public const int CredentialsLength = 16;
 
-    public static CreateClientRequest CreateClient(string email, bool enable, long expiryTimeMs, long tgId,
-        string? comment)
+    public static PanelClientCreate CreateClient(string email, bool enable, long expiryTimeMs, long tgId,
+        string? comment, IReadOnlyList<int> inboundIds)
     {
-        return new CreateClientRequest(
+        return new PanelClientCreate(
             email,
             enable,
             expiryTimeMs,
@@ -32,7 +30,8 @@ public static class PanelClientDefaults
             RandomString.LowerAndNum(CredentialsLength),
             RandomString.LowerAndNum(CredentialsLength),
             RandomString.LowerAndNum(CredentialsLength),
-            VisionFlow
+            VisionFlow,
+            inboundIds
         );
     }
 }

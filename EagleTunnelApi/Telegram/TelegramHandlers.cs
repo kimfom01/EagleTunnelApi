@@ -2,9 +2,7 @@ using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Identity;
 using EagleTunnelApi.Domain.Referrals;
 using EagleTunnelApi.Domain.Subscriptions;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
-using EagleTunnelApi.Webhook.Exceptions;
+using EagleTunnelApi.Application.Panel;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
@@ -21,13 +19,13 @@ public sealed class TelegramHandlers : IUpdateHandler
     private readonly IAdminPanelService _adminPanelService;
     private readonly ILogger<TelegramHandlers> _logger;
     private readonly string _panelBaseUri;
-    private readonly IPanelClient _panelClient;
+    private readonly IPanelGateway _panelClient;
 
     private readonly ReferralSettlementRunner _settlementRunner;
     private readonly SessionStore _sessionStore;
     private readonly TelegramOptions _telegramOptions;
 
-    public TelegramHandlers(SessionStore sessionStore, IPanelClient panelClient,
+    public TelegramHandlers(SessionStore sessionStore, IPanelGateway panelClient,
         IAdminPanelService adminPanelService, ReferralSettlementRunner settlementRunner,
         IOptions<TelegramOptions> telegramOptions,
         IOptions<PanelOptions> panelOptions, ILogger<TelegramHandlers> logger)
@@ -344,16 +342,16 @@ public sealed class TelegramHandlers : IUpdateHandler
             return;
         }
 
-        PanelClientResponse? existing;
+        PanelClientDetails? existing;
         try
         {
             existing = await _panelClient.GetClientByEmailAsync(email!, cancellationToken);
         }
         catch (PanelApiException ex)
         {
-            // The panel reports unknown emails as a failure, so a lookup error most likely
-            // means the address is free. Proceed: the create/update step below is authoritative
-            // and fails safely if the email is truly taken or the panel is down.
+            // A definitive not-found returns null. A failure means the panel is
+            // unavailable; the create/update step below is authoritative and fails
+            // safely if the email is taken or the panel is still down.
             _logger.LogWarning(ex, "Email lookup failed, assuming available. Email: {Email}", email);
             existing = null;
         }
@@ -500,7 +498,7 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task ShowReferrerEditor(ITelegramBotClient botClient, long telegramId,
         CancellationToken cancellationToken)
     {
-        PanelClientResponse? response;
+        PanelClientDetails? response;
         try
         {
             response = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
@@ -576,7 +574,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         var referrerTgId = session.PendingReferrerTgId;
         var referrerEmail = session.PendingReferrerEmail;
 
-        PanelClientResponse? existing;
+        PanelClientDetails? existing;
         try
         {
             existing = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
@@ -660,14 +658,12 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
 
-        var payload = new CreateClientPayload(
-            PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, telegramId, comment),
-            _telegramOptions.DefaultInboundIds.ToList()
-        );
+        var createRequest = PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, telegramId, comment,
+            _telegramOptions.DefaultInboundIds);
 
         try
         {
-            await _panelClient.AddClientAsync(payload, cancellationToken);
+            await _panelClient.AddClientAsync(createRequest, cancellationToken);
         }
         catch (PanelApiException)
         {
@@ -744,19 +740,9 @@ public sealed class TelegramHandlers : IUpdateHandler
                 client.Email, email);
         }
 
-        var recreated = migrated;
-        var payload = new CreateClientPayload(
-            new CreateClientRequest(
-                recreated.Email, recreated.Enable, recreated.ExpiryTime, recreated.TotalGB, recreated.TgId,
-                recreated.Comment, recreated.LimitHwid, recreated.TrafficReset, recreated.TrafficResetDay,
-                recreated.SubId ?? RandomString.LowerAndNum(PanelClientDefaults.CredentialsLength),
-                RandomString.LowerAndNum(PanelClientDefaults.CredentialsLength),
-                RandomString.LowerAndNum(PanelClientDefaults.CredentialsLength),
-                recreated.Flow ?? PanelClientDefaults.VisionFlow),
-            _telegramOptions.DefaultInboundIds.ToList()
-        );
+        var recreated = migrated.ToCreateRequest(_telegramOptions.DefaultInboundIds);
 
-        await _panelClient.AddClientAsync(payload, cancellationToken);
+        await _panelClient.AddClientAsync(recreated, cancellationToken);
         await _panelClient.BulkDisableClientsAsync([client.Email], cancellationToken);
     }
 
@@ -985,7 +971,7 @@ public sealed class TelegramHandlers : IUpdateHandler
     private async Task StartFriendInvite(ITelegramBotClient botClient, long telegramId,
         CancellationToken cancellationToken)
     {
-        PanelClientResponse? own;
+        PanelClientDetails? own;
         try
         {
             own = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
@@ -1044,8 +1030,8 @@ public sealed class TelegramHandlers : IUpdateHandler
             return;
         }
 
-        PanelClientResponse? own = null;
-        PanelClientResponse? existing = null;
+        PanelClientDetails? own = null;
+        PanelClientDetails? existing = null;
         try
         {
             own = await _panelClient.GetClientByTelegramIdAsync(telegramId, cancellationToken);
@@ -1117,9 +1103,9 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         try
         {
-            await _panelClient.AddClientAsync(new CreateClientPayload(
-                PanelClientDefaults.CreateClient(email, inviteEnable, inviteExpiryMs, 0, comment),
-                _telegramOptions.DefaultInboundIds.ToList()), cancellationToken);
+            await _panelClient.AddClientAsync(
+                PanelClientDefaults.CreateClient(email, inviteEnable, inviteExpiryMs, 0, comment,
+                    _telegramOptions.DefaultInboundIds), cancellationToken);
 
             if (!inviteEnable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
         }
@@ -1382,7 +1368,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         }
         catch (Exception ex)
         {
-            // Best effort only: unknown email surfaces as a failure, transport errors must not break the claim.
+            // Best effort only: unknown email returns null; transport errors must not break the claim.
             _logger.LogWarning(ex, "Legacy duplicate check failed while claiming. TelegramId: {TelegramId}",
                 telegramId);
             return;
@@ -2662,9 +2648,9 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         try
         {
-            await _panelClient.AddClientAsync(new CreateClientPayload(
-                PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, 0, comment),
-                _telegramOptions.DefaultInboundIds.ToList()), cancellationToken);
+            await _panelClient.AddClientAsync(
+                PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, 0, comment,
+                    _telegramOptions.DefaultInboundIds), cancellationToken);
 
             if (!enable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
 

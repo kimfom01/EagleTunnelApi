@@ -3,8 +3,8 @@ using System.Text;
 using System.Text.Json;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Referrals;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Infrastructure.PanelApi;
+using EagleTunnelApi.Infrastructure.PanelApi.Models;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -24,9 +24,9 @@ public class TelegramHandlersTests
     private const string PanelBaseUri = "https://panel.test";
     private const long TelegramId = 12345;
 
-    private static PanelClient ActiveClient()
+    private static PanelClientDto ActiveClient()
     {
-        return new PanelClient(
+        return new PanelClientDto(
             "uuid-1",
             "user@example.com",
             true,
@@ -47,37 +47,37 @@ public class TelegramHandlersTests
         );
     }
 
-    private static PanelClient TestClient(bool enable)
+    private static PanelClientDto TestClient(bool enable)
     {
         return ActiveClient() with { Enable = enable };
     }
 
-    private static string ClientListJson(PanelClient client)
+    private static string ClientListJson(PanelClientDto client)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
-            new List<PanelClientResponse> { new(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024) }));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientResponseDto>>(true, "ok",
+            new List<PanelClientResponseDto> { new(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024) }));
     }
 
-    private static string ClientByEmailJson(PanelClient client)
+    private static string ClientByEmailJson(PanelClientDto client)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<PanelClientResponse>(true, "ok",
-            new PanelClientResponse(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024)));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<PanelClientResponseDto>(true, "ok",
+            new PanelClientResponseDto(client, null, new List<int> { 1 }, 10L * 1024 * 1024 * 1024)));
     }
 
     private static string EmptyListJson()
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
-            new List<PanelClientResponse>()));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientResponseDto>>(true, "ok",
+            new List<PanelClientResponseDto>()));
     }
 
     private static string FailureJson(string message)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<object>(false, message, null));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<object>(false, message, null));
     }
 
     private static string SuccessJson()
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<object>(true, "ok", null));
     }
 
     private static HttpResponseMessage Json(string rawJson)
@@ -107,9 +107,9 @@ public class TelegramHandlersTests
             AdminIds = adminIds ?? Array.Empty<long>()
         });
 
-        var panelClient = new PanelApiClient(
+        var panelClient = new PanelApiGateway(
             new HttpClient(new StubHttpMessageHandler(panelResponder)) { BaseAddress = new Uri(PanelBaseUri) },
-            NullLogger<PanelApiClient>.Instance);
+            NullLogger<PanelApiGateway>.Instance);
 
         var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient,
             bot, telegramOptions);
@@ -188,7 +188,7 @@ public class TelegramHandlersTests
         Assert.Contains("email address", prompt.Body);
     }
 
-    private static PanelClient ReferrerAccount(long tgId = 777, string email = "friend@example.com")
+    private static PanelClientDto ReferrerAccount(long tgId = 777, string email = "friend@example.com")
     {
         return ActiveClient() with
         {
@@ -200,7 +200,7 @@ public class TelegramHandlersTests
     }
 
     private static (TelegramHandlers Handler, FakeTelegramBotClient Bot) CreateWizardHandler(
-        List<HttpRequestMessage> requests, PanelClient referrer, string newEmail = "newbie@example.com")
+        List<HttpRequestMessage> requests, PanelClientDto referrer, string newEmail = "newbie@example.com")
     {
         var getCount = 0;
 
@@ -1340,7 +1340,7 @@ public class TelegramHandlersTests
         var friend = ReferrerAccount();
         var getNewbieCount = 0;
 
-        PanelClient GrantedReferee()
+        PanelClientDto GrantedReferee()
         {
             return ActiveClient() with
             {
@@ -1857,9 +1857,9 @@ public class TelegramHandlersTests
 
     private static string SummaryListJson(params (int Id, string Email)[] rows)
     {
-        var summaries = rows.Select(r => new PanelClientSummary(
+        var summaries = rows.Select(r => new PanelClientSummaryDto(
             r.Id, r.Email, $"sub{r.Id}", null, 100, 0, true, null, null)).ToList();
-        return JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok", summaries));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientSummaryDto>>(true, "ok", summaries));
     }
 
     [Fact]
@@ -2429,8 +2429,8 @@ public class TelegramHandlersTests
             var path = request.RequestUri!.AbsolutePath;
 
             if (path == "/admin/panel/api/clients/list")
-                return Json(JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok",
-                    new List<PanelClientSummary>
+                return Json(JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientSummaryDto>>(true, "ok",
+                    new List<PanelClientSummaryDto>
                     {
                         new(1, "newbie@example.com", "sub1", "uuid-1", 100, referee.ExpiryTime, true,
                             new List<int> { 1 }, null)
@@ -2488,12 +2488,12 @@ public class TelegramHandlersTests
             AdminIds = new[] { TelegramId }
         });
 
-        var panelClient = new PanelApiClient(
+        var panelClient = new PanelApiGateway(
             new HttpClient(new StubHttpMessageHandler(_ => throw new InvalidOperationException("panel not used")))
             {
                 BaseAddress = new Uri(PanelBaseUri)
             },
-            NullLogger<PanelApiClient>.Instance);
+            NullLogger<PanelApiGateway>.Instance);
 
         var settlementRunner = new ReferralSettlementRunner(adminPanelService,
             new TestHostApplicationLifetime(), NullLogger<ReferralSettlementRunner>.Instance);
@@ -2744,12 +2744,12 @@ public class TelegramHandlersTests
     public async Task AdminList_RendersPaginatedClients()
     {
         var summaries = Enumerable.Range(1, 25)
-            .Select(i => new PanelClientSummary(
+            .Select(i => new PanelClientSummaryDto(
                 i, $"user{i:00}@example.com", $"sub{i:00}", null, 100,
                 0, i % 2 == 0, null, null))
             .ToList();
 
-        var listJson = JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok", summaries));
+        var listJson = JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientSummaryDto>>(true, "ok", summaries));
 
         var (handler, bot) = CreateHandler(_ => Json(listJson), [TelegramId]);
 
@@ -2768,12 +2768,12 @@ public class TelegramHandlersTests
     public async Task AdminList_NextPage_ShowsSecondPage()
     {
         var summaries = Enumerable.Range(1, 25)
-            .Select(i => new PanelClientSummary(
+            .Select(i => new PanelClientSummaryDto(
                 i, $"user{i:00}@example.com", $"sub{i:00}", null, 100,
                 0, i % 2 == 0, null, null))
             .ToList();
 
-        var listJson = JsonSerializer.Serialize(new PanelApiResponse<List<PanelClientSummary>>(true, "ok", summaries));
+        var listJson = JsonSerializer.Serialize(new PanelApiResponseDto<List<PanelClientSummaryDto>>(true, "ok", summaries));
 
         var (handler, bot) = CreateHandler(_ => Json(listJson), [TelegramId]);
 

@@ -1,6 +1,5 @@
 using EagleTunnelApi.Domain.Referrals;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Webhook.Events;
 using EagleTunnelApi.Webhook.Exceptions;
@@ -23,7 +22,7 @@ public interface ITributeEventsHandler
 public class TributeEventsHandler(
     ILogger<TributeEventsHandler> logger,
     ISubscriptionProvisioner provisioner,
-    IPanelClient panelClient,
+    IPanelGateway panelClient,
     IAdminPanelService adminPanelService)
     : ITributeEventsHandler
 {

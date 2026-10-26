@@ -1,8 +1,9 @@
 using System.Net;
 using System.Text.Json;
 using EagleTunnelApi.Configuration;
-using EagleTunnelApi.PanelApi;
-using EagleTunnelApi.PanelApi.Models;
+using EagleTunnelApi.Infrastructure.PanelApi;
+using EagleTunnelApi.Infrastructure.PanelApi.Models;
+using PanelApiException = EagleTunnelApi.Application.Panel.PanelApiException;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
 using EagleTunnelApi.Webhook.Events;
@@ -66,9 +67,9 @@ public class TributeEventsHandlerTests
         );
     }
 
-    private static PanelClient SampleClient(string email = "user@example.com", long tgId = TelegramId)
+    private static PanelClientDto SampleClient(string email = "user@example.com", long tgId = TelegramId)
     {
-        return new PanelClient(
+        return new PanelClientDto(
             "uuid-1234",
             email,
             false,
@@ -89,28 +90,28 @@ public class TributeEventsHandlerTests
         );
     }
 
-    private static string ClientListJson(params PanelClient[] clients)
+    private static string ClientListJson(params PanelClientDto[] clients)
     {
-        var apiResponse = new PanelApiResponse<List<PanelClientResponse>>(true, "ok",
-            clients.Select(c => new PanelClientResponse(c, null, new List<int> { 1 }, 0)).ToList());
+        var apiResponse = new PanelApiResponseDto<List<PanelClientResponseDto>>(true, "ok",
+            clients.Select(c => new PanelClientResponseDto(c, null, new List<int> { 1 }, 0)).ToList());
 
         return JsonSerializer.Serialize(apiResponse);
     }
 
-    private static string ClientByEmailJson(PanelClient client)
+    private static string ClientByEmailJson(PanelClientDto client)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<PanelClientResponse>(true, "ok",
-            new PanelClientResponse(client, null, new List<int> { 1 }, 0)));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<PanelClientResponseDto>(true, "ok",
+            new PanelClientResponseDto(client, null, new List<int> { 1 }, 0)));
     }
 
     private static string SuccessJson()
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<object>(true, "ok", null));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<object>(true, "ok", null));
     }
 
     private static string FailureJson(string message)
     {
-        return JsonSerializer.Serialize(new PanelApiResponse<object>(false, message, null));
+        return JsonSerializer.Serialize(new PanelApiResponseDto<object>(false, message, null));
     }
 
     private static (TributeEventsHandler Handler, FakeTelegramBotClient Bot) CreateHandler(
@@ -130,14 +131,14 @@ public class TributeEventsHandlerTests
             WebhookPath = "/webhooks/telegram"
         });
 
-        var panelClient = new PanelApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        var panelClient = new PanelApiGateway(new HttpClient(new StubHttpMessageHandler(request =>
         {
             requests?.Add(request);
             return responder(request);
         }))
         {
             BaseAddress = new Uri(BaseUri)
-        }, NullLogger<PanelApiClient>.Instance);
+        }, NullLogger<PanelApiGateway>.Instance);
 
         var adminPanelService = new AdminPanelService(NullLogger<AdminPanelService>.Instance, panelClient,
             bot, options);
@@ -449,7 +450,7 @@ public class TributeEventsHandlerTests
 
                 if (getRequests == 1) return StubHttpMessageHandler.Json(ClientListJson());
 
-                return StubHttpMessageHandler.Json(ClientListJson(new PanelClient(
+                return StubHttpMessageHandler.Json(ClientListJson(new PanelClientDto(
                     "uuid-5678",
                     $"tg{TelegramId}",
                     true,
@@ -626,7 +627,7 @@ public class TributeEventsHandlerTests
         Assert.Empty(requests);
     }
 
-    private static PanelClient TaggedRefereeClient()
+    private static PanelClientDto TaggedRefereeClient()
     {
         return SampleClient("newbie@example.com") with
         {
@@ -636,7 +637,7 @@ public class TributeEventsHandlerTests
         };
     }
 
-    private static PanelClient ReferrerClient()
+    private static PanelClientDto ReferrerClient()
     {
         return SampleClient("friend@example.com", 777) with
         {
