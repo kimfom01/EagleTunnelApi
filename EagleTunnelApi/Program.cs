@@ -3,6 +3,7 @@ using System.Text.Json;
 using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Infrastructure.PanelApi;
+using EagleTunnelApi.Infrastructure.Persistence;
 using EagleTunnelApi.Logging;
 using EagleTunnelApi.ServiceDefaults;
 using EagleTunnelApi.Telegram;
@@ -20,6 +21,8 @@ using Telegram.Bot.Types;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
+
+builder.Services.AddPersistence(builder.Configuration);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
