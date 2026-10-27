@@ -79,7 +79,7 @@ builder.Services.AddScoped<IVerifier, Verifier>();
 
 builder.Services.AddTransient<OutgoingRequestLoggingHandler>();
 
-builder.Services.AddHttpClient<IPanelGateway, PanelApiGateway>((sp, client) =>
+builder.Services.AddHttpClient<PanelApiGateway>((sp, client) =>
 {
     var panelOptions = sp.GetRequiredService<IOptions<PanelOptions>>().Value;
 
@@ -87,6 +87,11 @@ builder.Services.AddHttpClient<IPanelGateway, PanelApiGateway>((sp, client) =>
     client.DefaultRequestHeaders.Authorization =
         new AuthenticationHeaderValue("Bearer", panelOptions.ApiKey);
 }).AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
+
+builder.Services.AddTransient<IPanelGateway>(sp => new MirroringPanelGateway(
+    sp.GetRequiredService<PanelApiGateway>(),
+    sp.GetRequiredService<IPanelMirrorWriter>(),
+    sp.GetRequiredService<ILogger<MirroringPanelGateway>>()));
 
 builder.Services.AddHttpClient("telegram_bot_client")
     .AddTypedClient<ITelegramBotClient>((httpClient, sp) =>
