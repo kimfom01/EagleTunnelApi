@@ -97,6 +97,7 @@ builder.Services.AddHttpClient("telegram_bot_client")
     .AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
 
 builder.Services.AddScoped<IPanelSyncNotifier, PanelSyncNotifier>();
+builder.Services.AddSingleton<IPanelSyncRunner, PanelSyncRunner>();
 builder.Services.AddSingleton<ISubscriptionProvisioner, SubscriptionProvisioner>();
 builder.Services.AddSingleton<ITributeEventsHandler, TributeEventsHandler>();
 builder.Services.AddSingleton<IAdminPanelService, AdminPanelService>();

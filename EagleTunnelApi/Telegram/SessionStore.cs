@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Domain.Subscriptions;
 
 namespace EagleTunnelApi.Telegram;
@@ -59,6 +60,18 @@ public sealed class UserSession
     public List<string>? AdminCandidates { get; set; }
 
     public AdminAction AdminCandidatesAction { get; set; } = AdminAction.None;
+
+    /// <summary>
+    /// Panel inbound options loaded for the current Default Inbounds screen.
+    /// Kept in the session so toggling does not need another panel request.
+    /// </summary>
+    public List<PanelInboundOption>? AdminInboundOptions { get; set; }
+
+    /// <summary>The persisted default inbound ids shown when the screen opened.</summary>
+    public List<int>? AdminDefaultInboundIds { get; set; }
+
+    /// <summary>The admin's unsaved default inbound selection.</summary>
+    public List<int>? AdminSelectedInboundIds { get; set; }
 
     public RegistrationStep RegistrationStep { get; set; } = RegistrationStep.None;
 

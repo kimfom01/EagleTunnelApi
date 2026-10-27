@@ -1,3 +1,4 @@
+using System.Text;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Identity;
 using EagleTunnelApi.Domain.Referrals;
@@ -16,24 +17,28 @@ namespace EagleTunnelApi.Telegram;
 public sealed class TelegramHandlers : IUpdateHandler
 {
     private const int AdminListPageSize = 20;
+    private const int AdminConflictDisplayLimit = 10;
     private readonly IAdminPanelService _adminPanelService;
     private readonly ILogger<TelegramHandlers> _logger;
     private readonly string _panelBaseUri;
     private readonly IPanelGateway _panelClient;
     private readonly IPanelDirectory _panelDirectory;
+    private readonly IPanelSyncRunner _panelSyncRunner;
 
     private readonly ReferralSettlementRunner _settlementRunner;
     private readonly SessionStore _sessionStore;
     private readonly TelegramOptions _telegramOptions;
 
     public TelegramHandlers(SessionStore sessionStore, IPanelGateway panelClient,
-        IPanelDirectory panelDirectory, IAdminPanelService adminPanelService,
-        ReferralSettlementRunner settlementRunner, IOptions<TelegramOptions> telegramOptions,
-        IOptions<PanelOptions> panelOptions, ILogger<TelegramHandlers> logger)
+        IPanelDirectory panelDirectory, IPanelSyncRunner panelSyncRunner,
+        IAdminPanelService adminPanelService, ReferralSettlementRunner settlementRunner,
+        IOptions<TelegramOptions> telegramOptions, IOptions<PanelOptions> panelOptions,
+        ILogger<TelegramHandlers> logger)
     {
         _sessionStore = sessionStore;
         _panelClient = panelClient;
         _panelDirectory = panelDirectory;
+        _panelSyncRunner = panelSyncRunner;
         _adminPanelService = adminPanelService;
         _settlementRunner = settlementRunner;
         _telegramOptions = telegramOptions.Value;
@@ -1420,6 +1425,7 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.AdminChangeEmailTo = null;
         session.AdminReferrerTgId = null;
         session.AdminReferrerEmail = null;
+        ClearAdminPanelState(session);
 
         await botClient.SendMessage(telegramId,
             "🛠 *Admin Panel*\n\nPick an action to manage your panel.",
@@ -1437,11 +1443,419 @@ public sealed class TelegramHandlers : IUpdateHandler
         session.AdminChangeEmailTo = null;
         session.AdminReferrerTgId = null;
         session.AdminReferrerEmail = null;
+        ClearAdminPanelState(session);
 
         await botClient.EditMessageText(telegramId, messageId,
             "🛠 *Admin Panel*\n\nPick an action to manage your panel.",
             ParseMode.Markdown, MenuService.AdminMenu(),
             cancellationToken: cancellationToken);
+    }
+
+    private async Task EditAdminPanelMenu(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+        ClearAdminPanelState(session);
+
+        await botClient.EditMessageText(telegramId, messageId,
+            "🖥 *Panel Management*\n\nSync status, conflicts, and the default inbounds for new clients.",
+            ParseMode.Markdown, MenuService.AdminPanelMenu(), cancellationToken: cancellationToken);
+    }
+
+    private async Task ShowAdminPanelSyncStatus(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+
+        try
+        {
+            var status = await _panelDirectory.GetSyncStatusAsync(cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId, BuildAdminSyncStatusText(status),
+                ParseMode.Markdown, MenuService.AdminPanelSyncMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await ShowAdminPanelErrorAsync(botClient, telegramId, messageId,
+                "❌ Could not load panel sync status. Please try again.", ex, cancellationToken);
+        }
+    }
+
+    private static string BuildAdminSyncStatusText(PanelSyncStatus status)
+    {
+        var text = new StringBuilder();
+
+        text.AppendLine("📊 *Panel Sync Status*");
+        text.AppendLine();
+        text.AppendLine($"Last success: {FormatAdminTimestamp(status.LastSuccessAt)}");
+        text.AppendLine($"Last run mode: {status.LastRunMode ?? "—"}");
+        text.AppendLine($"Seen: {status.LastSeenCount} · Changed: {status.LastChangedCount}");
+        text.AppendLine($"Last error: {FormatAdminError(status.LastError)}");
+
+        if (status.LastCompletedAt is { } completed)
+            text.AppendLine($"Last completed: {FormatAdminTimestamp(completed)}");
+
+        if (status.CursorPanelUpdatedAt is { } cursor)
+            text.AppendLine($"Cursor: {FormatAdminTimestamp(cursor)}");
+
+        return text.ToString().TrimEnd();
+    }
+
+    private async Task ExecuteAdminPanelSyncNow(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+
+        await SafeEditAsync(botClient, telegramId, messageId,
+            "⏳ Running panel sync now…", MenuService.AdminPanelSyncMenu(), cancellationToken);
+
+        _ = ReportAdminPanelSyncAsync(botClient, telegramId, messageId);
+    }
+
+    private async Task ReportAdminPanelSyncAsync(ITelegramBotClient botClient, long telegramId, int messageId)
+    {
+        PanelSyncResult result;
+
+        try
+        {
+            var owner = $"panel-sync:admin:{telegramId}:{Guid.NewGuid():N}";
+            result = await _panelSyncRunner.RunNowAsync(owner, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Admin panel sync failed. Admin: {TelegramId}", telegramId);
+            var now = DateTimeOffset.UtcNow;
+            result = new PanelSyncResult(false, "cursor", 0, 0, 0, 0, 0, ex.Message, now, now, "failed");
+        }
+
+        await SafeEditAsync(botClient, telegramId, messageId, BuildAdminSyncRunText(result),
+            MenuService.AdminPanelSyncMenu(), CancellationToken.None);
+    }
+
+    private static string BuildAdminSyncRunText(PanelSyncResult result)
+    {
+        if (result.Skipped)
+            return "⏳ Panel sync skipped.\n\n" +
+                SanitizeAdminText(result.Reason ?? "Another run owns the sync lease.", 300);
+
+        if (!string.IsNullOrWhiteSpace(result.Error))
+            return $"❌ Panel sync failed.\n\n`{SanitizeAdminText(result.Error, 500)}`";
+
+        var text = new StringBuilder();
+
+        text.AppendLine("✅ Panel sync completed.");
+        text.AppendLine();
+        text.AppendLine($"Mode: {result.Mode}");
+        text.AppendLine($"Seen: {result.Seen} · Changed: {result.Changed}");
+        text.AppendLine($"Deleted: {result.Deleted} · Conflicts: {result.Conflicts}");
+
+        if (result.Failures > 0) text.AppendLine($"Failures: {result.Failures}");
+
+        return text.ToString().TrimEnd();
+    }
+
+    private async Task ShowAdminPanelConflicts(ITelegramBotClient botClient, long telegramId, int messageId,
+        string? notice, CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+
+        try
+        {
+            var conflicts = await _panelDirectory.GetSyncConflictsAsync(PanelSyncConflictStates.Open,
+                AdminConflictDisplayLimit, cancellationToken);
+
+            await botClient.EditMessageText(telegramId, messageId,
+                BuildAdminConflictsText(conflicts, notice), ParseMode.Markdown,
+                MenuService.AdminPanelConflictsMenu(conflicts), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await ShowAdminPanelErrorAsync(botClient, telegramId, messageId,
+                "❌ Could not load panel conflicts. Please try again.", ex, cancellationToken);
+        }
+    }
+
+    private static string BuildAdminConflictsText(IReadOnlyList<PanelSyncConflictView> conflicts,
+        string? notice)
+    {
+        var text = new StringBuilder();
+
+        if (!string.IsNullOrWhiteSpace(notice))
+        {
+            text.AppendLine(notice);
+            text.AppendLine();
+        }
+
+        text.AppendLine("⚠️ *Open Panel Conflicts*");
+        text.AppendLine();
+
+        if (conflicts.Count == 0)
+        {
+            text.AppendLine("No open conflicts. The mirror and panel identities agree.");
+            return text.ToString().TrimEnd();
+        }
+
+        for (var index = 0; index < conflicts.Count; index++)
+        {
+            var conflict = conflicts[index];
+            var panel = conflict.PanelClientId?.ToString() ?? "—";
+            var otherPanel = conflict.OtherPanelClientId is { } other
+                ? $" · other panel: `{other}`"
+                : "";
+
+            text.AppendLine($"{index + 1}. Type: `{SanitizeAdminText(conflict.Type, 40)}` " +
+                $"· last seen {FormatAdminTimestamp(conflict.LastSeenAt)}");
+            text.AppendLine($"   Email: " +
+                $"{(string.IsNullOrWhiteSpace(conflict.EmailNormalized) ? "—" : $"`{conflict.EmailNormalized}`")}");
+            text.AppendLine($"   Telegram ID: {conflict.TelegramId?.ToString() ?? "—"} · Panel: `{panel}`" +
+                otherPanel);
+            text.AppendLine();
+        }
+
+        if (conflicts.Count >= AdminConflictDisplayLimit)
+            text.AppendLine($"Showing the {AdminConflictDisplayLimit} most recent open conflicts.");
+
+        return text.ToString().TrimEnd();
+    }
+
+    private async Task ResolveAdminPanelConflict(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, string prefix, string status, string successNotice,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+
+        if (!Guid.TryParse(data[prefix.Length..], out var conflictId))
+        {
+            await ShowAdminPanelConflicts(botClient, telegramId, messageId,
+                "⚠️ That conflict is no longer available.", cancellationToken);
+            return;
+        }
+
+        try
+        {
+            await _panelDirectory.ResolveSyncConflictAsync(conflictId, status, $"telegram:{telegramId}",
+                cancellationToken);
+        }
+        catch (KeyNotFoundException)
+        {
+            await ShowAdminPanelConflicts(botClient, telegramId, messageId,
+                "⚠️ That conflict was not found. The list has been refreshed.", cancellationToken);
+            return;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Panel conflict update failed. Admin: {TelegramId}, Conflict: {ConflictId}",
+                telegramId, conflictId);
+            await ShowAdminPanelConflicts(botClient, telegramId, messageId,
+                "❌ Could not update the conflict. Please try again.", cancellationToken);
+            return;
+        }
+
+        await ShowAdminPanelConflicts(botClient, telegramId, messageId, successNotice, cancellationToken);
+    }
+
+    private async Task ShowAdminPanelInbounds(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+
+        try
+        {
+            var defaults = await _panelDirectory.GetDefaultInboundIdsAsync(cancellationToken);
+            var options = await _panelClient.GetInboundOptionsAsync(cancellationToken);
+
+            session.AdminInboundOptions = options.ToList();
+            session.AdminDefaultInboundIds = defaults.ToList();
+            session.AdminSelectedInboundIds = defaults.ToList();
+
+            await RenderAdminPanelInbounds(botClient, telegramId, messageId, null, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ClearAdminPanelState(session);
+            await ShowAdminPanelErrorAsync(botClient, telegramId, messageId,
+                "❌ Could not load panel inbound options. Please try again.", ex, cancellationToken);
+        }
+    }
+
+    private async Task RenderAdminPanelInbounds(ITelegramBotClient botClient, long telegramId, int messageId,
+        string? notice, CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        var options = session.AdminInboundOptions ?? [];
+        var current = session.AdminDefaultInboundIds ?? [];
+        var selected = session.AdminSelectedInboundIds ?? [];
+        var canSave = !selected.Order().SequenceEqual(current.Order());
+
+        await botClient.EditMessageText(telegramId, messageId,
+            BuildAdminInboundsText(options, current, selected, notice), ParseMode.Markdown,
+            MenuService.AdminPanelInboundsMenu(options, selected, canSave),
+            cancellationToken: cancellationToken);
+    }
+
+    private static string BuildAdminInboundsText(IReadOnlyList<PanelInboundOption> options,
+        IReadOnlyList<int> current, IReadOnlyList<int> selected, string? notice)
+    {
+        var text = new StringBuilder();
+
+        if (!string.IsNullOrWhiteSpace(notice))
+        {
+            text.AppendLine(notice);
+            text.AppendLine();
+        }
+
+        text.AppendLine("🌐 *Default Inbounds*");
+        text.AppendLine();
+        text.AppendLine($"Current: {FormatAdminIds(current)}");
+        text.AppendLine($"Selected: {FormatAdminIds(selected)}");
+        text.AppendLine();
+        text.AppendLine("Tap an inbound to toggle it, then tap Save. " +
+            "At least one inbound is required for new clients.");
+
+        if (options.Count == 0)
+        {
+            text.AppendLine();
+            text.AppendLine("⚠️ The panel returned no inbound options.");
+        }
+        else if (current.Any(id => options.All(option => option.Id != id)))
+        {
+            text.AppendLine();
+            text.AppendLine("⚠️ A current default is no longer offered by the panel. Deselect it and save.");
+        }
+
+        return text.ToString().TrimEnd();
+    }
+
+    private async Task ToggleAdminPanelInbound(ITelegramBotClient botClient, long telegramId, int messageId,
+        string data, CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+
+        if (!int.TryParse(data[MenuService.AdminPanelInboundTogglePrefix.Length..], out var inboundId) ||
+            session.AdminInboundOptions is null ||
+            session.AdminDefaultInboundIds is null ||
+            session.AdminSelectedInboundIds is null)
+        {
+            await ShowAdminPanelInbounds(botClient, telegramId, messageId, cancellationToken);
+            return;
+        }
+
+        var options = session.AdminInboundOptions.Select(option => option.Id).ToHashSet();
+
+        if (!options.Contains(inboundId) && !session.AdminSelectedInboundIds.Contains(inboundId))
+        {
+            await ShowAdminPanelInbounds(botClient, telegramId, messageId, cancellationToken);
+            return;
+        }
+
+        if (!session.AdminSelectedInboundIds.Remove(inboundId))
+            session.AdminSelectedInboundIds.Add(inboundId);
+
+        session.AdminSelectedInboundIds.Sort();
+
+        await RenderAdminPanelInbounds(botClient, telegramId, messageId, null, cancellationToken);
+    }
+
+    private async Task SaveAdminPanelInbounds(ITelegramBotClient botClient, long telegramId, int messageId,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessionStore.Get(telegramId);
+        session.AdminAction = AdminAction.None;
+
+        if (session.AdminInboundOptions is null ||
+            session.AdminDefaultInboundIds is null ||
+            session.AdminSelectedInboundIds is null)
+        {
+            await ShowAdminPanelInbounds(botClient, telegramId, messageId, cancellationToken);
+            return;
+        }
+
+        var selected = session.AdminSelectedInboundIds.ToArray();
+
+        if (selected.Length == 0)
+        {
+            await RenderAdminPanelInbounds(botClient, telegramId, messageId,
+                "⚠️ Select at least one inbound before saving.", cancellationToken);
+            return;
+        }
+
+        try
+        {
+            await _panelDirectory.SetDefaultInboundsAsync(selected, session.AdminInboundOptions,
+                $"telegram:{telegramId}", cancellationToken);
+
+            session.AdminDefaultInboundIds = selected.ToList();
+        }
+        catch (ArgumentException ex)
+        {
+            await RenderAdminPanelInbounds(botClient, telegramId, messageId,
+                $"⚠️ {SanitizeAdminText(ex.Message, 300)}", cancellationToken);
+            return;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Saving default panel inbounds failed. Admin: {TelegramId}", telegramId);
+            await RenderAdminPanelInbounds(botClient, telegramId, messageId,
+                "❌ Could not save default inbounds. Please try again.", cancellationToken);
+            return;
+        }
+
+        await RenderAdminPanelInbounds(botClient, telegramId, messageId,
+            "✅ Default inbounds saved.", cancellationToken);
+    }
+
+    private async Task ShowAdminPanelErrorAsync(ITelegramBotClient botClient, long telegramId, int messageId,
+        string message, Exception exception, CancellationToken cancellationToken)
+    {
+        _logger.LogError(exception, "Panel management action failed. Admin: {TelegramId}", telegramId);
+
+        try
+        {
+            await botClient.EditMessageText(telegramId, messageId, message, ParseMode.Markdown,
+                MenuService.AdminPanelMenu(), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to edit panel management message. Admin: {TelegramId}", telegramId);
+        }
+    }
+
+    private static void ClearAdminPanelState(UserSession session)
+    {
+        session.AdminInboundOptions = null;
+        session.AdminDefaultInboundIds = null;
+        session.AdminSelectedInboundIds = null;
+    }
+
+    private static string FormatAdminTimestamp(DateTimeOffset? value)
+    {
+        return value?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'") ?? "never";
+    }
+
+    private static string FormatAdminError(string? error)
+    {
+        return string.IsNullOrWhiteSpace(error)
+            ? "none"
+            : $"`{SanitizeAdminText(error, 300)}`";
+    }
+
+    private static string SanitizeAdminText(string value, int maxLength)
+    {
+        var text = value.Replace('`', '\'').Replace('\r', ' ').Replace('\n', ' ').Trim();
+
+        return text.Length <= maxLength ? text : $"{text[..(maxLength - 1)]}…";
+    }
+
+    private static string FormatAdminIds(IReadOnlyList<int> ids)
+    {
+        return ids.Count == 0 ? "none" : string.Join(", ", ids);
     }
 
     private async Task HandleAdminCallback(ITelegramBotClient botClient, long telegramId, int messageId,
@@ -1559,6 +1973,52 @@ public sealed class TelegramHandlers : IUpdateHandler
             case MenuService.AdminList:
                 await ShowAdminList(botClient, telegramId, messageId, 0, cancellationToken);
                 return;
+
+            case MenuService.AdminPanel:
+                await EditAdminPanelMenu(botClient, telegramId, messageId, cancellationToken);
+                return;
+
+            case MenuService.AdminPanelSync:
+                await ShowAdminPanelSyncStatus(botClient, telegramId, messageId, cancellationToken);
+                return;
+
+            case MenuService.AdminPanelSyncRun:
+                await ExecuteAdminPanelSyncNow(botClient, telegramId, messageId, cancellationToken);
+                return;
+
+            case MenuService.AdminPanelConflicts:
+                await ShowAdminPanelConflicts(botClient, telegramId, messageId, null, cancellationToken);
+                return;
+
+            case MenuService.AdminPanelInbounds:
+                await ShowAdminPanelInbounds(botClient, telegramId, messageId, cancellationToken);
+                return;
+
+            case MenuService.AdminPanelInboundsSave:
+                await SaveAdminPanelInbounds(botClient, telegramId, messageId, cancellationToken);
+                return;
+        }
+
+        if (data.StartsWith(MenuService.AdminPanelResolvePrefix, StringComparison.Ordinal))
+        {
+            await ResolveAdminPanelConflict(botClient, telegramId, messageId, data,
+                MenuService.AdminPanelResolvePrefix, PanelSyncConflictStates.Resolved,
+                "✅ Conflict resolved.", cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminPanelDismissPrefix, StringComparison.Ordinal))
+        {
+            await ResolveAdminPanelConflict(botClient, telegramId, messageId, data,
+                MenuService.AdminPanelDismissPrefix, PanelSyncConflictStates.Dismissed,
+                "🚫 Conflict dismissed.", cancellationToken);
+            return;
+        }
+
+        if (data.StartsWith(MenuService.AdminPanelInboundTogglePrefix, StringComparison.Ordinal))
+        {
+            await ToggleAdminPanelInbound(botClient, telegramId, messageId, data, cancellationToken);
+            return;
         }
 
         if (data.StartsWith(MenuService.AdminListPrev + ":", StringComparison.Ordinal))

@@ -1,3 +1,4 @@
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Domain.Subscriptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -32,6 +33,16 @@ public static class MenuService
     public const string AdminChangeEmail = "admin:change-email";
     public const string AdminExit = "admin:exit";
     public const string AdminCancel = "admin:cancel";
+
+    public const string AdminPanel = "admin:pm";
+    public const string AdminPanelSync = "admin:pm:sync";
+    public const string AdminPanelSyncRun = "admin:pm:sync:run";
+    public const string AdminPanelConflicts = "admin:pm:conflicts";
+    public const string AdminPanelResolvePrefix = "admin:pm:c:r:";
+    public const string AdminPanelDismissPrefix = "admin:pm:c:d:";
+    public const string AdminPanelInbounds = "admin:pm:i";
+    public const string AdminPanelInboundTogglePrefix = "admin:pm:i:t:";
+    public const string AdminPanelInboundsSave = "admin:pm:i:s";
 
     public const string AdminListPrev = "admin:list:prev";
     public const string AdminListNext = "admin:list:next";
@@ -121,6 +132,7 @@ public static class MenuService
             ],
             [InlineKeyboardButton.WithCallbackData("📨 Send Reminder", AdminNudge),
              InlineKeyboardButton.WithCallbackData("🛠 Settle Referrals", AdminSettle)],
+            [InlineKeyboardButton.WithCallbackData("🖥 Panel Management", AdminPanel)],
             [InlineKeyboardButton.WithCallbackData("❌ Exit Admin", AdminExit)]
         ]);
     }
@@ -157,6 +169,90 @@ public static class MenuService
             ],
             [InlineKeyboardButton.WithCallbackData("❌ Exit Admin", AdminExit)]
         ]);
+    }
+
+    public static InlineKeyboardMarkup AdminPanelMenu()
+    {
+        return new InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton.WithCallbackData("📊 Sync Status", AdminPanelSync)],
+            [InlineKeyboardButton.WithCallbackData("⚠️ Conflicts", AdminPanelConflicts)],
+            [InlineKeyboardButton.WithCallbackData("🌐 Default Inbounds", AdminPanelInbounds)],
+            [InlineKeyboardButton.WithCallbackData("🔙 Back", Admin)]
+        ]);
+    }
+
+    public static InlineKeyboardMarkup AdminPanelSyncMenu()
+    {
+        return new InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton.WithCallbackData("🔄 Run sync now", AdminPanelSyncRun)],
+            [InlineKeyboardButton.WithCallbackData("🔙 Back", AdminPanel)]
+        ]);
+    }
+
+    public static InlineKeyboardMarkup AdminPanelConflictsMenu(
+        IReadOnlyList<PanelSyncConflictView> conflicts)
+    {
+        var rows = new List<IEnumerable<InlineKeyboardButton>>();
+
+        for (var index = 0; index < conflicts.Count; index++)
+        {
+            var number = index + 1;
+            rows.Add([
+                InlineKeyboardButton.WithCallbackData($"✅ {number} Resolve",
+                    $"{AdminPanelResolvePrefix}{conflicts[index].Id}"),
+                InlineKeyboardButton.WithCallbackData($"🚫 {number} Dismiss",
+                    $"{AdminPanelDismissPrefix}{conflicts[index].Id}")
+            ]);
+        }
+
+        rows.Add([InlineKeyboardButton.WithCallbackData("🔙 Back", AdminPanel)]);
+
+        return new InlineKeyboardMarkup(rows);
+    }
+
+    public static InlineKeyboardMarkup AdminPanelInboundsMenu(
+        IReadOnlyList<PanelInboundOption> options, IReadOnlyCollection<int> selectedIds, bool canSave)
+    {
+        var selected = selectedIds.ToHashSet();
+        var rows = new List<IEnumerable<InlineKeyboardButton>>();
+        var available = new HashSet<int>();
+
+        foreach (var option in options
+                     .GroupBy(inbound => inbound.Id)
+                     .Select(group => group.Last())
+                     .OrderBy(inbound => inbound.Id))
+        {
+            available.Add(option.Id);
+            rows.Add([
+                InlineKeyboardButton.WithCallbackData(BuildInboundLabel(option, selected.Contains(option.Id)),
+                    $"{AdminPanelInboundTogglePrefix}{option.Id}")
+            ]);
+        }
+
+        foreach (var missingId in selectedIds.Where(id => !available.Contains(id)).Order())
+        {
+            rows.Add([
+                InlineKeyboardButton.WithCallbackData($"⚠️ {missingId} · not on panel",
+                    $"{AdminPanelInboundTogglePrefix}{missingId}")
+            ]);
+        }
+
+        if (canSave) rows.Add([InlineKeyboardButton.WithCallbackData("💾 Save", AdminPanelInboundsSave)]);
+
+        rows.Add([InlineKeyboardButton.WithCallbackData("🔙 Back", AdminPanel)]);
+
+        return new InlineKeyboardMarkup(rows);
+    }
+
+    private static string BuildInboundLabel(PanelInboundOption option, bool selected)
+    {
+        var name = option.Remark ?? option.Tag ?? $"Inbound {option.Id}";
+
+        if (name.Length > 28) name = $"{name[..27]}…";
+
+        return $"{(selected ? "✅" : "⬜")} {option.Id} · {name}";
     }
 
     public static InlineKeyboardMarkup ReferralMenu(string referralLink, string supportUrl)
