@@ -28,6 +28,7 @@ public class PersistenceRegistrationTests
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<AppDbContext>());
         Assert.NotNull(provider.GetRequiredService<IDbContextFactory<AppDbContext>>());
+        Assert.NotNull(provider.GetRequiredService<DatabaseMigrationRunner>());
     }
 
     [Fact]

@@ -27,6 +27,8 @@ public static class PersistenceServiceCollectionExtensions
         services.AddScoped<AppDbContext>(serviceProvider =>
             serviceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
 
+        services.AddSingleton<DatabaseMigrationRunner>();
+
         return services;
     }
 }

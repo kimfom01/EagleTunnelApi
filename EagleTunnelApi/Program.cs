@@ -104,6 +104,8 @@ builder.Services.AddHostedService<PanelInboundPreflightService>();
 
 var app = builder.Build();
 
+await app.Services.GetRequiredService<DatabaseMigrationRunner>().MigrateAsync();
+
 app.MapDefaultEndpoints();
 
 if (app.Environment.IsDevelopment())
