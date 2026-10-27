@@ -5,7 +5,7 @@ Single source of truth for work that is **not implemented yet**. Implemented beh
 `TESTING_PLAN.md`) were consolidated into this document and removed to avoid duplication; git history still contains
 them if the old detail is ever needed.
 
-> **Status:** planning only. Nothing in this document has been built unless explicitly marked otherwise.
+> **Status:** planning document. R0–R3a are implemented; later slices remain planned unless explicitly marked otherwise.
 >
 > **Deployment:** per-slice infrastructure, environment variables, and release checks live in
 > [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -42,7 +42,7 @@ Steps 3 and 4 can overlap. Step 6 is deliberately continuous, not a big-bang rew
 
 ## 1. Email-first web app
 
-**Status:** Design only
+**Status:** Design only for endpoints and auth use cases. The R3a auth/session/login-code schema is implemented.
 
 ### 1.1 Goal
 
@@ -404,7 +404,7 @@ codes (purge after expiry + 1 day), IP/user-agent storage (privacy tradeoff).
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Finalize schema/contract details, sending domain, from/reply-to, and operational limits. | Design only |
-| 1 | R3a: EF Core/Postgres, entities, migrations, Testcontainers, token/session/outbox primitives, audit. **No HTTP endpoints.** | Planned |
+| 1 | R3a: EF Core/Postgres, entities, migrations, Testcontainers, auth/session/outbox/audit schema, persistence primitives. **No HTTP endpoints.** | Implemented |
 | 2 | R3b: comment backfill + panel mirror/sync/conflicts + admin sync/default-inbound menu. | Planned |
 | 3 | R3c: email outbox processor + email-code auth/identity use cases. **Still no endpoints.** | Planned |
 | 4 | R6: auth endpoints + SPA shell + login page. | Planned |
@@ -434,7 +434,7 @@ next one starts; do not expose routes before the use cases behind them are cover
 
 ## 2. Clean architecture refactor
 
-**Status:** Planned. **R0 (project skeleton and boundary tests) and R1 (pure domain move) are implemented.** This is the
+**Status:** R0–R2 are implemented, along with the R3a persistence foundation. R3b–R7 remain planned. This is the
 delivery vehicle for the web app, not a separate rewrite.
 
 ### 2.1 Why now
@@ -576,7 +576,7 @@ Each phase is a separately verifiable, commit-sized slice. No behavior change un
 | R0 ✅ | Create Domain/Application/Infrastructure projects, add project references, add architecture tests. Move no production code. | Solution builds; all existing tests pass; architecture tests fail on an intentional violation. |
 | R1 ✅ | Move pure Domain types and their tests (`SubscriptionStatus`, formatter, referral parsing/policies, email normalization). | Existing behavior unchanged; tests moved/updated; no panel DTOs in Domain. |
 | R2 ✅ | Introduce `IPanelGateway` and application models; move `PanelApiClient` + DTOs to Infrastructure; map at the boundary. | No panel DTOs outside Infrastructure; not-found vs unavailable preserved; tests pass. |
-| R3a | EF Core/Postgres foundation: `AppDbContext`, configurations, migrations, startup migration runner, Testcontainers harness, auth/session/outbox/audit/panel-mirror schema. No HTTP endpoints. | Migrations apply to a clean Postgres; schema tests cover unique/partial indexes and `xmin`; no endpoints exposed. |
+| R3a ✅ | EF Core/Postgres foundation: `AppDbContext`, configurations, migrations, startup migration runner, Testcontainers harness, auth/session/outbox/audit/panel-mirror schema. No HTTP endpoints. | Migrations apply to a clean Postgres; schema tests cover unique/partial indexes and `xmin`; no endpoints exposed. |
 | R3b | Comment backfill + panel directory/sync/conflicts + admin sync/default-inbound menu. | Initial backfill is idempotent; sync is locked and observable; conflicts are persisted and alerted; default inbounds come from Postgres. |
 | R3c | Email outbox processor + email-code auth/identity use cases. No HTTP endpoints. | Code + outbox commit atomically; claim/retry/dead-letter tests pass; auth use cases covered against Postgres. |
 | R4 | Extract registration, claim, activation, and referral-settlement use cases; shrink `TelegramHandlers`. | Bot flows still pass existing tests; handler contains parsing/rendering only; no business rules. |
@@ -584,9 +584,9 @@ Each phase is a separately verifiable, commit-sized slice. No behavior change un
 | R6 | Add web auth endpoints + SPA shell + DB-backed dashboard + manual refresh. | Login, session, dashboard, refresh, and logout work end to end; no Telegram requirement. |
 | R7 | Credits ledger (Section 3). | Ledger design implemented behind use cases; panel projection reconciled. |
 
-R0–R2 are implemented: the Domain/Application/Infrastructure projects, NetArchTest boundary tests, the pure domain types
-(subscription status/formatter, referral/trial/credit tag policy, email normalization), and the panel gateway are in the
-solution. R3–R7 remain unbuilt.
+R0–R3a are implemented: the Domain/Application/Infrastructure projects, NetArchTest boundary tests, the pure domain types
+(subscription status/formatter, referral/trial/credit tag policy, email normalization), the panel gateway, and the EF
+Core/PostgreSQL foundation with its initial migration and startup runner are in the solution. R3b–R7 remain unbuilt.
 
 Sequencing:
 
@@ -660,7 +660,8 @@ Run architecture tests in CI with the normal build/test job.
 
 ## 3. Credits platform and ledger
 
-**Status:** Design only. Do not implement until the web auth foundation is stable.
+**Status:** Storage schema implemented in R3a. Ledger behavior, wallet, spending, and payments remain design-only until
+the web auth foundation is stable and R7 begins.
 
 ### 3.1 Goal
 
@@ -784,7 +785,9 @@ from Phases 2–3 may land in R3a/R3b. That is storage only; wallet, spending, p
 
 ## 4. Identity, panel directory, sync, and conflicts
 
-**Status:** Planned. This is the foundation for login, dashboard, admin tooling, and comment removal.
+**Status:** The R3a persistence schema is implemented. Backfill, panel sync, conflicts, and admin flows are planned in
+R3b; login and dashboard use cases follow. This is the foundation for login, dashboard, admin tooling, and comment
+removal.
 
 ### 4.1 Authority split
 
