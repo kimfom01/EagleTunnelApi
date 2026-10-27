@@ -6,7 +6,7 @@ namespace EagleTunnelApi.Telegram;
 
 public sealed record UserDetails(
     string Uuid,
-    int Id,
+    long Id,
     string SubId,
     string Username,
     SubscriptionStatus Status,

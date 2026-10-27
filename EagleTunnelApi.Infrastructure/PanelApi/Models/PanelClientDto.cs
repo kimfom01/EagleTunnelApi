@@ -26,7 +26,12 @@ public sealed record PanelClientDto(
     string? Security,
     [property: JsonPropertyName("subId")] string? SubId,
     [property: JsonPropertyName("flow")] string? Flow,
-    [property: JsonPropertyName("id")] int Id,
+    [property: JsonPropertyName("id")] long Id,
     [property: JsonPropertyName("inboundIds")]
     List<int>? InboundIds
-);
+)
+{
+    [JsonPropertyName("createdAt")] public long CreatedAt { get; init; }
+
+    [JsonPropertyName("updatedAt")] public long UpdatedAt { get; init; }
+}

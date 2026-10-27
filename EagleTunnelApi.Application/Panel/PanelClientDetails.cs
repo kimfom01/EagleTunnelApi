@@ -5,4 +5,9 @@ public sealed record PanelClientDetails(
     IReadOnlyList<string>? ExternalLinks,
     IReadOnlyList<int>? InboundIds,
     long UsedTraffic
-);
+)
+{
+    public DateTimeOffset? CreatedAt { get; init; }
+
+    public DateTimeOffset? UpdatedAt { get; init; }
+}
