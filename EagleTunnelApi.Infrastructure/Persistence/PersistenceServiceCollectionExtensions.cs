@@ -1,8 +1,10 @@
 using EagleTunnelApi.Application.Auditing;
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Application.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 
 namespace EagleTunnelApi.Infrastructure.Persistence;
@@ -32,6 +34,10 @@ public static class PersistenceServiceCollectionExtensions
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
         services.AddScoped<IAuditWriter, EfAuditWriter>();
         services.AddSingleton<DatabaseMigrationRunner>();
+
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<PanelDirectoryFallback>(PanelDirectoryFallback.Empty);
+        services.TryAddSingleton<IPanelDirectory, PanelDirectoryStore>();
 
         return services;
     }

@@ -55,6 +55,8 @@ builder.Services.PostConfigure<TelegramOptions>(options =>
             .Select(long.Parse).ToArray();
 });
 builder.Services.AddSingleton<IValidateOptions<TelegramOptions>, TelegramOptionsValidator>();
+builder.Services.AddSingleton(serviceProvider => new PanelDirectoryFallback(
+    serviceProvider.GetRequiredService<IOptions<TelegramOptions>>().Value.DefaultInboundIds));
 
 builder.Services.AddOptions<PanelOptions>()
     .Bind(builder.Configuration.GetSection(PanelOptions.SectionName))
@@ -109,6 +111,8 @@ builder.Services.AddHostedService<PanelInboundPreflightService>();
 var app = builder.Build();
 
 await app.Services.GetRequiredService<DatabaseMigrationRunner>().MigrateAsync();
+await app.Services.GetRequiredService<IPanelDirectory>()
+    .GetDefaultInboundIdsAsync(CancellationToken.None);
 
 app.MapDefaultEndpoints();
 

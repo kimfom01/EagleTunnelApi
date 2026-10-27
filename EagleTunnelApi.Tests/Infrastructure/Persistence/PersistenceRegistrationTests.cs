@@ -1,4 +1,5 @@
 using EagleTunnelApi.Application.Auditing;
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Application.Persistence;
 using EagleTunnelApi.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +34,9 @@ public class PersistenceRegistrationTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IAuditWriter>());
         Assert.NotNull(provider.GetRequiredService<IDbContextFactory<AppDbContext>>());
         Assert.NotNull(provider.GetRequiredService<DatabaseMigrationRunner>());
+        Assert.NotNull(provider.GetRequiredService<IPanelDirectory>());
+        Assert.NotNull(provider.GetRequiredService<PanelDirectoryFallback>());
+        Assert.NotNull(provider.GetRequiredService<TimeProvider>());
     }
 
     [Fact]
