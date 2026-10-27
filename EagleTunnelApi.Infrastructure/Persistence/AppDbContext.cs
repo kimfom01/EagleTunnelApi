@@ -25,6 +25,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<PanelSyncConflict> PanelSyncConflicts => Set<PanelSyncConflict>();
 
+    public DbSet<ReferralAttribution> ReferralAttributions => Set<ReferralAttribution>();
+
+    public DbSet<TrialPeriod> TrialPeriods => Set<TrialPeriod>();
+
+    public DbSet<CancellationState> CancellationStates => Set<CancellationState>();
+
+    public DbSet<ReminderDelivery> ReminderDeliveries => Set<ReminderDelivery>();
+
+    public DbSet<CreditEntry> CreditEntries => Set<CreditEntry>();
+
+    public DbSet<CreditApplication> CreditApplications => Set<CreditApplication>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
