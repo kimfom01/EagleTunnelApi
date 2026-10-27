@@ -40,6 +40,7 @@ public static class PersistenceServiceCollectionExtensions
         services.TryAddSingleton<IPanelDirectory, PanelDirectoryStore>();
         services.TryAddSingleton<IPanelMirrorWriter, PanelMirrorWriter>();
         services.TryAddSingleton<ICommentBackfill, CommentBackfillService>();
+        services.TryAddScoped<IPanelSync, PanelSyncService>();
 
         return services;
     }

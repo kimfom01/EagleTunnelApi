@@ -8,7 +8,8 @@ namespace EagleTunnelApi.Tests.Infrastructure.Persistence;
 internal static class PersistenceTestProvider
 {
     public static ServiceProvider Build(string connectionString,
-        PanelDirectoryFallback? fallback = null, TimeProvider? timeProvider = null)
+        PanelDirectoryFallback? fallback = null, TimeProvider? timeProvider = null,
+        Action<IServiceCollection>? configure = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -23,6 +24,7 @@ internal static class PersistenceTestProvider
 
         if (fallback is not null) services.AddSingleton(fallback);
         if (timeProvider is not null) services.AddSingleton(timeProvider);
+        configure?.Invoke(services);
 
         return services.BuildServiceProvider();
     }

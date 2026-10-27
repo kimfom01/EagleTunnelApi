@@ -1,4 +1,3 @@
-using System.Text.Json;
 using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Domain.Identity;
 using EagleTunnelApi.Infrastructure.Persistence.Entities;
@@ -41,7 +40,7 @@ public sealed class PanelMirrorWriter(
 
         if (normalizedEmail is null)
         {
-            conflicts.Add(await UpsertConflictAsync(context,
+            conflicts.Add(await PanelConflictRecorder.UpsertAsync(context,
                 $"panel:{panelClient.Id}:invalid_email",
                 PanelConflictTypes.InvalidEmail,
                 null,
@@ -103,7 +102,7 @@ public sealed class PanelMirrorWriter(
         var telegramConflict = telegramPanelClient is not null || telegramAppUser is not null;
 
         if (emailConflict)
-            conflicts.Add(await UpsertConflictAsync(context,
+            conflicts.Add(await PanelConflictRecorder.UpsertAsync(context,
                 $"email:{normalizedEmail}",
                 PanelConflictTypes.Email,
                 normalizedEmail,
@@ -123,7 +122,7 @@ public sealed class PanelMirrorWriter(
                 cancellationToken));
 
         if (telegramConflict)
-            conflicts.Add(await UpsertConflictAsync(context,
+            conflicts.Add(await PanelConflictRecorder.UpsertAsync(context,
                 $"tg:{telegramId}",
                 PanelConflictTypes.Telegram,
                 normalizedEmail,
@@ -240,6 +239,16 @@ public sealed class PanelMirrorWriter(
             appUser.UpdatedAt = now;
         }
 
+        await PanelConflictRecorder.ResolveOwnedAsync(context,
+            $"panel:{panelClient.Id}:missing", panelClient.Id, "panel-sync", now, cancellationToken);
+
+        await PanelConflictRecorder.ResolveOwnedAsync(context,
+            $"email:{effectiveEmail}", panelClient.Id, "panel-sync", now, cancellationToken);
+
+        if (effectiveTelegramId is not null)
+            await PanelConflictRecorder.ResolveOwnedAsync(context,
+                $"tg:{effectiveTelegramId}", panelClient.Id, "panel-sync", now, cancellationToken);
+
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
@@ -292,61 +301,6 @@ public sealed class PanelMirrorWriter(
                 PanelClientId = panelClientRowId,
                 InboundId = inboundId
             });
-    }
-
-    private static async Task<PanelMirrorConflict> UpsertConflictAsync(AppDbContext context,
-        string dedupeKey, string type, string? emailNormalized, long? telegramId, long? panelClientId,
-        long? otherPanelClientId, Guid? appUserId, object details, DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        var detailsDocument = JsonSerializer.SerializeToDocument(details);
-        var conflict = await context.PanelSyncConflicts
-            .SingleOrDefaultAsync(candidate => candidate.DedupeKey == dedupeKey, cancellationToken);
-
-        var isNew = conflict is null;
-        var reopened = false;
-
-        if (conflict is null)
-        {
-            conflict = new PanelSyncConflict
-            {
-                Id = Guid.NewGuid(),
-                DedupeKey = dedupeKey,
-                Status = PanelSyncConflictStatus.Open,
-                FirstSeenAt = now,
-                LastSeenAt = now
-            };
-
-            context.PanelSyncConflicts.Add(conflict);
-        }
-        else
-        {
-            var detailsChanged = conflict.Details is null ||
-                conflict.Details.RootElement.GetRawText() !=
-                detailsDocument.RootElement.GetRawText();
-
-            conflict.LastSeenAt = now;
-
-            if (conflict.Status != PanelSyncConflictStatus.Open)
-            {
-                conflict.Status = PanelSyncConflictStatus.Open;
-                conflict.ResolvedAt = null;
-                conflict.ResolvedBy = null;
-                reopened = true;
-            }
-
-            if (reopened || detailsChanged) conflict.NotifiedAt = null;
-        }
-
-        conflict.Type = type;
-        conflict.EmailNormalized = emailNormalized;
-        conflict.TelegramId = telegramId;
-        conflict.PanelClientId = panelClientId;
-        conflict.OtherPanelClientId = otherPanelClientId;
-        conflict.AppUserId = appUserId;
-        conflict.Details = detailsDocument;
-
-        return new PanelMirrorConflict(conflict.Id, dedupeKey, type, isNew, reopened);
     }
 
     private static DateTimeOffset? FromUnixMilliseconds(long value)

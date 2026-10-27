@@ -37,4 +37,6 @@ public static class PanelConflictTypes
     public const string Email = "email";
     public const string Telegram = "telegram";
     public const string InvalidEmail = "invalid_email";
+    public const string PanelClientMissing = "panel_client_missing";
+    public const string AppUserOrphan = "app_user_orphan";
 }
