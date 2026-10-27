@@ -36,6 +36,7 @@ public class PersistenceRegistrationTests
         Assert.NotNull(provider.GetRequiredService<DatabaseMigrationRunner>());
         Assert.NotNull(provider.GetRequiredService<IPanelDirectory>());
         Assert.NotNull(provider.GetRequiredService<IPanelMirrorWriter>());
+        Assert.NotNull(provider.GetRequiredService<ICommentBackfill>());
         Assert.NotNull(provider.GetRequiredService<PanelDirectoryFallback>());
         Assert.NotNull(provider.GetRequiredService<TimeProvider>());
     }

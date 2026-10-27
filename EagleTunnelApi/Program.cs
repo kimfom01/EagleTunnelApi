@@ -24,6 +24,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 builder.Services.AddPersistence(builder.Configuration);
+builder.Services.AddScoped<IPanelBackfill, PanelBackfillService>();
 
 builder.Services.AddHealthChecks()
     .AddCheck<PostgresHealthCheck>("postgres");

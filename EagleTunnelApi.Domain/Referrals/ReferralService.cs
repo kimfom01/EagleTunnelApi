@@ -154,6 +154,42 @@ public static partial class ReferralService
         return CancelledRegex().Replace(comment, "").TrimEnd(' ', '·');
     }
 
+    public static bool TryGetCancelledDate(string? comment, out DateOnly cancelledDate)
+    {
+        cancelledDate = default;
+
+        if (string.IsNullOrEmpty(comment)) return false;
+
+        var match = CancelledDateRegex().Match(comment);
+
+        return match.Success && DateOnly.TryParseExact(match.Groups[1].Value, "yyyy-MM-dd",
+            CultureInfo.InvariantCulture, DateTimeStyles.None, out cancelledDate);
+    }
+
+    public static IReadOnlyList<ReminderMarker> GetReminderMarkers(string? comment)
+    {
+        if (string.IsNullOrEmpty(comment)) return [];
+
+        var markers = new List<ReminderMarker>();
+
+        foreach (Match match in ReminderDeliveryRegex().Matches(comment))
+        {
+            if (!int.TryParse(match.Groups[1].Value, out var daysBefore) || daysBefore < 0) continue;
+
+            if (!DateOnly.TryParseExact(match.Groups[2].Value, "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var expiryDate))
+                continue;
+
+            markers.Add(new ReminderMarker(daysBefore, expiryDate));
+        }
+
+        return markers
+            .Distinct()
+            .OrderBy(marker => marker.ExpiryDate)
+            .ThenBy(marker => marker.DaysBefore)
+            .ToArray();
+    }
+
     /// <summary>
     /// Removes win-back state (the <c>Cancelled</c> tag and all
     /// <c>Reminder Nd sent</c> markers) when paid access resumes.
@@ -280,6 +316,12 @@ public static partial class ReferralService
     [GeneratedRegex(@"\s*·?\s*Cancelled \d{4}-\d{2}-\d{2}\s*·?\s*", RegexOptions.IgnoreCase)]
     private static partial Regex CancelledRegex();
 
+    [GeneratedRegex(@"Cancelled (\d{4}-\d{2}-\d{2})", RegexOptions.IgnoreCase)]
+    private static partial Regex CancelledDateRegex();
+
+    [GeneratedRegex(@"Reminder (\d+)d sent for (\d{4}-\d{2}-\d{2})", RegexOptions.IgnoreCase)]
+    private static partial Regex ReminderDeliveryRegex();
+
     [GeneratedRegex(@"\s*·?\s*Reminder \d+d sent for \d{4}-\d{2}-\d{2}\s*·?\s*", RegexOptions.IgnoreCase)]
     private static partial Regex ReminderMarkerRegex();
 
@@ -292,3 +334,5 @@ public static partial class ReferralService
     [GeneratedRegex(@"^tg\d+$", RegexOptions.IgnoreCase)]
     private static partial Regex LegacyEmailRegex();
 }
+
+public sealed record ReminderMarker(int DaysBefore, DateOnly ExpiryDate);

@@ -39,6 +39,7 @@ public static class PersistenceServiceCollectionExtensions
         services.TryAddSingleton<PanelDirectoryFallback>(PanelDirectoryFallback.Empty);
         services.TryAddSingleton<IPanelDirectory, PanelDirectoryStore>();
         services.TryAddSingleton<IPanelMirrorWriter, PanelMirrorWriter>();
+        services.TryAddSingleton<ICommentBackfill, CommentBackfillService>();
 
         return services;
     }
