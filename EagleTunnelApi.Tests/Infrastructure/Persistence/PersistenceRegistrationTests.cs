@@ -1,3 +1,5 @@
+using EagleTunnelApi.Application.Auditing;
+using EagleTunnelApi.Application.Persistence;
 using EagleTunnelApi.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -27,6 +29,8 @@ public class PersistenceRegistrationTests
         using var scope = provider.CreateScope();
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IUnitOfWork>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IAuditWriter>());
         Assert.NotNull(provider.GetRequiredService<IDbContextFactory<AppDbContext>>());
         Assert.NotNull(provider.GetRequiredService<DatabaseMigrationRunner>());
     }

@@ -1,6 +1,5 @@
 using System.Reflection;
 using EagleTunnelApi.Infrastructure.Persistence;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Xunit;
@@ -42,7 +41,7 @@ public class DatabaseMigrationRunnerTests
     public async Task MigrateAsync_applies_the_initial_migration_and_releases_the_lock()
     {
         await using var database = await PostgresTestDatabase.CreateAsync(_fixture.ConnectionString);
-        using var provider = BuildProvider(database.ConnectionString);
+        using var provider = PersistenceTestProvider.Build(database.ConnectionString);
         var runner = provider.GetRequiredService<DatabaseMigrationRunner>();
 
         await runner.MigrateAsync();
@@ -76,7 +75,7 @@ public class DatabaseMigrationRunnerTests
             database.ConnectionString,
             "CREATE TABLE app_users (id uuid PRIMARY KEY)");
 
-        using var provider = BuildProvider(database.ConnectionString);
+        using var provider = PersistenceTestProvider.Build(database.ConnectionString);
         var runner = provider.GetRequiredService<DatabaseMigrationRunner>();
 
         var exception = await Record.ExceptionAsync(() => runner.MigrateAsync());
@@ -92,8 +91,8 @@ public class DatabaseMigrationRunnerTests
     public async Task MigrateAsync_serializes_concurrent_startups()
     {
         await using var database = await PostgresTestDatabase.CreateAsync(_fixture.ConnectionString);
-        using var firstProvider = BuildProvider(database.ConnectionString);
-        using var secondProvider = BuildProvider(database.ConnectionString);
+        using var firstProvider = PersistenceTestProvider.Build(database.ConnectionString);
+        using var secondProvider = PersistenceTestProvider.Build(database.ConnectionString);
 
         var firstRunner = firstProvider.GetRequiredService<DatabaseMigrationRunner>();
         var secondRunner = secondProvider.GetRequiredService<DatabaseMigrationRunner>();
@@ -110,7 +109,7 @@ public class DatabaseMigrationRunnerTests
     public async Task ResetAsync_preserves_the_schema_and_migration_history()
     {
         await using var database = await PostgresTestDatabase.CreateAsync(_fixture.ConnectionString);
-        using var provider = BuildProvider(database.ConnectionString);
+        using var provider = PersistenceTestProvider.Build(database.ConnectionString);
         await provider.GetRequiredService<DatabaseMigrationRunner>().MigrateAsync();
 
         await database.ResetAsync();
@@ -119,22 +118,6 @@ public class DatabaseMigrationRunnerTests
         Assert.Equal(1L, await ExecuteScalarAsync<long>(
             database.ConnectionString,
             "SELECT count(*) FROM \"__EFMigrationsHistory\""));
-    }
-
-    private static ServiceProvider BuildProvider(string connectionString)
-    {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:Postgres"] = connectionString
-            })
-            .Build();
-
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddPersistence(configuration);
-
-        return services.BuildServiceProvider();
     }
 
     private static async Task<string[]> GetTablesAsync(string connectionString)

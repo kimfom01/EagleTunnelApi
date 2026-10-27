@@ -1,3 +1,5 @@
+using EagleTunnelApi.Application.Auditing;
+using EagleTunnelApi.Application.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,6 +29,8 @@ public static class PersistenceServiceCollectionExtensions
         services.AddScoped<AppDbContext>(serviceProvider =>
             serviceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
 
+        services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        services.AddScoped<IAuditWriter, EfAuditWriter>();
         services.AddSingleton<DatabaseMigrationRunner>();
 
         return services;
