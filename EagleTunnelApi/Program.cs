@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Health;
 using EagleTunnelApi.Infrastructure.PanelApi;
 using EagleTunnelApi.Infrastructure.Persistence;
 using EagleTunnelApi.Logging;
@@ -23,6 +24,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 builder.Services.AddPersistence(builder.Configuration);
+
+builder.Services.AddHealthChecks()
+    .AddCheck<PostgresHealthCheck>("postgres");
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
