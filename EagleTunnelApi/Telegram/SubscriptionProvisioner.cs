@@ -1,7 +1,5 @@
-using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Referrals;
 using EagleTunnelApi.Application.Panel;
-using Microsoft.Extensions.Options;
 
 namespace EagleTunnelApi.Telegram;
 
@@ -15,10 +13,8 @@ public interface ISubscriptionProvisioner
 public class SubscriptionProvisioner(
     ILogger<SubscriptionProvisioner> logger,
     IPanelGateway panelClient,
-    IOptions<TelegramOptions> telegramOptions) : ISubscriptionProvisioner
+    IPanelDirectory panelDirectory) : ISubscriptionProvisioner
 {
-    private readonly TelegramOptions _telegramOptions = telegramOptions.Value;
-
     public async Task ActivateAsync(long telegramId, DateTime expireAtUtc, string source,
         CancellationToken cancellationToken)
     {
@@ -48,8 +44,9 @@ public class SubscriptionProvisioner(
         logger.LogWarning("Creating Missing Client At Panel. TelegramId: {TelegramId}", telegramId);
 
         var email = $"tg{telegramId}";
+        var inboundIds = await panelDirectory.GetDefaultInboundIdsAsync(cancellationToken);
         var createRequest = PanelClientDefaults.CreateClient(email, true, expiryTimeMs, telegramId,
-            $"Created from subscription: {subscriptionName}", _telegramOptions.DefaultInboundIds);
+            $"Created from subscription: {subscriptionName}", inboundIds);
 
         await panelClient.AddClientAsync(createRequest, cancellationToken);
 
@@ -125,12 +122,13 @@ public class SubscriptionProvisioner(
             }
         }
 
+        var inboundIds = await panelDirectory.GetDefaultInboundIdsAsync(cancellationToken);
         var updateRequest = client.ToUpdateRequest() with
         {
             Enable = enable,
             ExpiryTime = resolvedExpiry ?? client.ExpiryTime,
             Comment = comment,
-            InboundIds = _telegramOptions.DefaultInboundIds.ToList()
+            InboundIds = inboundIds.ToList()
         };
 
         await panelClient.UpdateClientAsync(updateRequest, cancellationToken);

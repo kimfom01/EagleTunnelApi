@@ -1,13 +1,11 @@
 using System.Net;
 using System.Text.Json;
-using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Infrastructure.PanelApi;
 using EagleTunnelApi.Infrastructure.PanelApi.Models;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace EagleTunnelApi.Tests.PanelApi;
@@ -17,7 +15,7 @@ public class PanelInboundPreflightServiceTests
     private const string PanelBaseUri = "https://panel.test";
 
     private static (PanelInboundPreflightService Service, CapturingLogger<PanelInboundPreflightService> Logger)
-        CreateService(IEnumerable<int> availableInboundIds, params int[] configuredInboundIds)
+        CreateService(IEnumerable<int> availableInboundIds, params int[] effectiveInboundIds)
     {
         var inbounds = availableInboundIds
             .Select(id => new PanelInboundOptionDto(id, $"Inbound {id}", $"tag-{id}", "vless", 443, true))
@@ -36,15 +34,15 @@ public class PanelInboundPreflightServiceTests
             NullLogger<PanelApiGateway>.Instance);
 
         var logger = new CapturingLogger<PanelInboundPreflightService>();
+        var directory = new StubPanelDirectory { DefaultInboundIds = effectiveInboundIds };
 
-        var service = new PanelInboundPreflightService(panelClient,
-            Options.Create(new TelegramOptions { DefaultInboundIds = configuredInboundIds }), logger);
+        var service = new PanelInboundPreflightService(panelClient, directory, logger);
 
         return (service, logger);
     }
 
     [Fact]
-    public async Task Check_AllConfiguredInboundsExist_LogsInformation()
+    public async Task Check_AllEffectiveInboundsExist_LogsInformation()
     {
         var (service, logger) = CreateService([2, 6], 2, 6);
 
@@ -52,7 +50,8 @@ public class PanelInboundPreflightServiceTests
 
         Assert.DoesNotContain(logger.Entries, entry => entry.Level == LogLevel.Critical);
         Assert.Contains(logger.Entries,
-            entry => entry.Level == LogLevel.Information && entry.Message.Contains("preflight passed"));
+            entry => entry.Level == LogLevel.Information && entry.Message.Contains("preflight passed") &&
+                entry.Message.Contains("2, 6"));
     }
 
     [Fact]
@@ -66,7 +65,7 @@ public class PanelInboundPreflightServiceTests
         Assert.Contains("1", critical.Message);
         Assert.Contains("2", critical.Message);
         Assert.Contains("6", critical.Message);
-        Assert.Contains("DefaultInboundIds", critical.Message);
+        Assert.Contains("effective default inbound ids", critical.Message);
     }
 
     [Fact]
@@ -80,8 +79,8 @@ public class PanelInboundPreflightServiceTests
             NullLogger<PanelApiGateway>.Instance);
 
         var logger = new CapturingLogger<PanelInboundPreflightService>();
-        var service = new PanelInboundPreflightService(panelClient,
-            Options.Create(new TelegramOptions { DefaultInboundIds = [2, 6] }), logger);
+        var directory = new StubPanelDirectory { DefaultInboundIds = [2, 6] };
+        var service = new PanelInboundPreflightService(panelClient, directory, logger);
 
         await service.CheckAsync(CancellationToken.None);
 

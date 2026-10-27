@@ -102,7 +102,9 @@ public class TelegramHandlersTests
             TributeSubscriptionUrl = "https://tribute.test",
             BotUsername = "TestBot",
             TrialDurationHours = trialHours,
-            DefaultInboundIds = new[] { 1, 2 },
+            // The effective values come from PanelDirectory; this fallback must
+            // not be used when the directory has an authoritative set.
+            DefaultInboundIds = new[] { 99 },
             WebhookPath = "/webhooks/telegram",
             AdminIds = adminIds ?? Array.Empty<long>()
         });
@@ -117,7 +119,8 @@ public class TelegramHandlersTests
         var settlementRunner = new ReferralSettlementRunner(adminPanelService, new TestHostApplicationLifetime(),
             NullLogger<ReferralSettlementRunner>.Instance);
 
-        var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService, settlementRunner,
+        var handler = new TelegramHandlers(new SessionStore(), panelClient,
+            new StubPanelDirectory { DefaultInboundIds = [1, 2] }, adminPanelService, settlementRunner,
             telegramOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
             NullLogger<TelegramHandlers>.Instance);
 
@@ -267,6 +270,8 @@ public class TelegramHandlersTests
         Assert.Equal("newbie@example.com", client.GetProperty("email").GetString());
         Assert.True(client.GetProperty("enable").GetBoolean());
         Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
+        Assert.Equal(new[] { 1, 2 }, payload.GetProperty("inboundIds").EnumerateArray()
+            .Select(e => e.GetInt32()).ToArray());
         Assert.InRange(client.GetProperty("expiryTime").GetInt64(),
             DateTimeOffset.UtcNow.AddHours(2).AddMinutes(-2).ToUnixTimeMilliseconds(),
             DateTimeOffset.UtcNow.AddHours(2).AddMinutes(2).ToUnixTimeMilliseconds());
@@ -2498,7 +2503,8 @@ public class TelegramHandlersTests
         var settlementRunner = new ReferralSettlementRunner(adminPanelService,
             new TestHostApplicationLifetime(), NullLogger<ReferralSettlementRunner>.Instance);
 
-        var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService, settlementRunner,
+        var handler = new TelegramHandlers(new SessionStore(), panelClient,
+            new StubPanelDirectory { DefaultInboundIds = [2, 6] }, adminPanelService, settlementRunner,
             telegramOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
             NullLogger<TelegramHandlers>.Instance);
 

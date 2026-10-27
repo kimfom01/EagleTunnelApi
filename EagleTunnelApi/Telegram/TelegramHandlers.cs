@@ -20,18 +20,20 @@ public sealed class TelegramHandlers : IUpdateHandler
     private readonly ILogger<TelegramHandlers> _logger;
     private readonly string _panelBaseUri;
     private readonly IPanelGateway _panelClient;
+    private readonly IPanelDirectory _panelDirectory;
 
     private readonly ReferralSettlementRunner _settlementRunner;
     private readonly SessionStore _sessionStore;
     private readonly TelegramOptions _telegramOptions;
 
     public TelegramHandlers(SessionStore sessionStore, IPanelGateway panelClient,
-        IAdminPanelService adminPanelService, ReferralSettlementRunner settlementRunner,
-        IOptions<TelegramOptions> telegramOptions,
+        IPanelDirectory panelDirectory, IAdminPanelService adminPanelService,
+        ReferralSettlementRunner settlementRunner, IOptions<TelegramOptions> telegramOptions,
         IOptions<PanelOptions> panelOptions, ILogger<TelegramHandlers> logger)
     {
         _sessionStore = sessionStore;
         _panelClient = panelClient;
+        _panelDirectory = panelDirectory;
         _adminPanelService = adminPanelService;
         _settlementRunner = settlementRunner;
         _telegramOptions = telegramOptions.Value;
@@ -658,8 +660,9 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         if (trialEnds.HasValue) comment = ReferralService.WithTrialTag(comment, trialEnds.Value);
 
+        var inboundIds = await _panelDirectory.GetDefaultInboundIdsAsync(cancellationToken);
         var createRequest = PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, telegramId, comment,
-            _telegramOptions.DefaultInboundIds);
+            inboundIds);
 
         try
         {
@@ -740,7 +743,8 @@ public sealed class TelegramHandlers : IUpdateHandler
                 client.Email, email);
         }
 
-        var recreated = migrated.ToCreateRequest(_telegramOptions.DefaultInboundIds);
+        var inboundIds = await _panelDirectory.GetDefaultInboundIdsAsync(cancellationToken);
+        var recreated = migrated.ToCreateRequest(inboundIds);
 
         await _panelClient.AddClientAsync(recreated, cancellationToken);
         await _panelClient.BulkDisableClientsAsync([client.Email], cancellationToken);
@@ -1103,9 +1107,10 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         try
         {
+            var inboundIds = await _panelDirectory.GetDefaultInboundIdsAsync(cancellationToken);
             await _panelClient.AddClientAsync(
                 PanelClientDefaults.CreateClient(email, inviteEnable, inviteExpiryMs, 0, comment,
-                    _telegramOptions.DefaultInboundIds), cancellationToken);
+                    inboundIds), cancellationToken);
 
             if (!inviteEnable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
         }
@@ -2648,9 +2653,10 @@ public sealed class TelegramHandlers : IUpdateHandler
 
         try
         {
+            var inboundIds = await _panelDirectory.GetDefaultInboundIdsAsync(cancellationToken);
             await _panelClient.AddClientAsync(
                 PanelClientDefaults.CreateClient(email, enable, expiryTimeMs, 0, comment,
-                    _telegramOptions.DefaultInboundIds), cancellationToken);
+                    inboundIds), cancellationToken);
 
             if (!enable) await _panelClient.BulkDisableClientsAsync([email], cancellationToken);
 
@@ -2699,8 +2705,8 @@ public sealed class TelegramHandlers : IUpdateHandler
             await botClient.SendMessage(adminId,
                 $"❌ Registration failed for {email}.\n\n" +
                 $"Panel: {detail}\n\n" +
-                "If the panel was updated recently, check that Telegram:DefaultInboundIds " +
-                "matches its current inbound IDs.",
+                "If the panel was updated recently, check /admin -> Panel Management -> Default Inbounds " +
+                "(or Telegram:DefaultInboundIds) matches its current inbound IDs.",
                 replyMarkup: MenuService.AdminMenu(), cancellationToken: cancellationToken);
         }
     }
