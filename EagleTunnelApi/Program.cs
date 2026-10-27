@@ -6,6 +6,7 @@ using EagleTunnelApi.Health;
 using EagleTunnelApi.Infrastructure.PanelApi;
 using EagleTunnelApi.Infrastructure.Persistence;
 using EagleTunnelApi.Logging;
+using EagleTunnelApi.PanelSync;
 using EagleTunnelApi.ServiceDefaults;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Webhook.Events;
@@ -69,6 +70,11 @@ builder.Services.AddOptions<TributeOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<TributeOptions>, TributeOptionsValidator>();
 
+builder.Services.AddOptions<PanelSyncOptions>()
+    .Bind(builder.Configuration.GetSection(PanelSyncOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<PanelSyncOptions>, PanelSyncOptionsValidator>();
+
 builder.Services.AddScoped<IVerifier, Verifier>();
 
 builder.Services.AddTransient<OutgoingRequestLoggingHandler>();
@@ -90,6 +96,7 @@ builder.Services.AddHttpClient("telegram_bot_client")
     })
     .AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
 
+builder.Services.AddScoped<IPanelSyncNotifier, PanelSyncNotifier>();
 builder.Services.AddSingleton<ISubscriptionProvisioner, SubscriptionProvisioner>();
 builder.Services.AddSingleton<ITributeEventsHandler, TributeEventsHandler>();
 builder.Services.AddSingleton<IAdminPanelService, AdminPanelService>();
@@ -108,6 +115,8 @@ builder.Services.AddHostedService<ExpiryReminderService>();
 builder.Services.AddHostedService<ReferralSettlementService>();
 
 builder.Services.AddHostedService<PanelInboundPreflightService>();
+
+builder.Services.AddHostedService<PanelSyncWorker>();
 
 var app = builder.Build();
 
