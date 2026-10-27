@@ -5,12 +5,13 @@ Single source of truth for work that is **not implemented yet**. Implemented beh
 `TESTING_PLAN.md`) were consolidated into this document and removed to avoid duplication; git history still contains
 them if the old detail is ever needed.
 
-> **Status:** planning document. R0–R3a are implemented; later slices remain planned unless explicitly marked otherwise.
+> **Status:** planning document. R0–R3b panel mirror/sync/conflicts and `Panel Management` are implemented. Comment-state
+> dual-write, the comment read switch, and later slices remain planned unless explicitly marked otherwise.
 >
 > **Deployment:** per-slice infrastructure, environment variables, and release checks live in
 > [DEPLOYMENT.md](DEPLOYMENT.md).
 >
-> **Last updated:** 2026-10-26
+> **Last updated:** 2026-10-28
 
 ## Status legend
 
@@ -30,7 +31,7 @@ dashboard, admin tooling, and the bot all read the same state.
 1. Clean architecture skeleton and panel gateway (Section 2, R0–R2).
 2. EF Core/PostgreSQL foundation, schema, migrations, and Testcontainers harness (R3a).
 3. Comment backfill + panel directory, 10-minute sync, conflict alerts, and the admin sync/default-inbound menu
-   (R3b, Section 4).
+   (R3b, Section 4 — implemented; comment-state dual-write remains pending).
 4. Email outbox + email-code auth/identity foundation (R3c, Section 1).
 5. Web auth endpoints + DB-backed dashboard + manual refresh (R6).
 6. Continue extracting bot/admin use cases (R4–R5) in parallel from R2 onward.
@@ -405,7 +406,7 @@ codes (purge after expiry + 1 day), IP/user-agent storage (privacy tradeoff).
 |---|---|---|
 | 0 | Finalize schema/contract details, sending domain, from/reply-to, and operational limits. | Design only |
 | 1 | R3a: EF Core/Postgres, entities, migrations, Testcontainers, auth/session/outbox/audit schema, persistence primitives. **No HTTP endpoints.** | Implemented |
-| 2 | R3b: comment backfill + panel mirror/sync/conflicts + admin sync/default-inbound menu. | Planned |
+| 2 | R3b: comment backfill + panel mirror/sync/conflicts + admin sync/default-inbound menu. | Implemented; comment-state dual-write pending |
 | 3 | R3c: email outbox processor + email-code auth/identity use cases. **Still no endpoints.** | Planned |
 | 4 | R6: auth endpoints + SPA shell + login page. | Planned |
 | 5 | DB-backed dashboard (subscription, traffic, expiry, devices, link/QR, refresh). | Planned |
@@ -428,14 +429,16 @@ next one starts; do not expose routes before the use cases behind them are cover
 7. Whether to store raw IP/user-agent values and for how long.
 8. Whether the web app shows referral/credit data in v1 or only the subscription dashboard.
 9. OpenAPI/Postman contract ownership and CI validation.
-10. Exact sync interval, staleness threshold, and manual-refresh rate limit once real panel latency is measured.
+10. Exact staleness threshold and manual-refresh rate limit once real panel latency is measured. The sync interval is
+    configurable (`PanelSync:IntervalMinutes`, default 10).
 
 ---
 
 ## 2. Clean architecture refactor
 
-**Status:** R0–R2 are implemented, along with the R3a persistence foundation. R3b–R7 remain planned. This is the
-delivery vehicle for the web app, not a separate rewrite.
+**Status:** R0–R2, the R3a persistence foundation, and the R3b panel mirror/sync/conflicts plus `Panel Management` are
+implemented. Comment-state dual-write, the read switch, and R3c–R7 remain planned. This is the delivery vehicle for the
+web app, not a separate rewrite.
 
 ### 2.1 Why now
 
@@ -577,16 +580,22 @@ Each phase is a separately verifiable, commit-sized slice. No behavior change un
 | R1 ✅ | Move pure Domain types and their tests (`SubscriptionStatus`, formatter, referral parsing/policies, email normalization). | Existing behavior unchanged; tests moved/updated; no panel DTOs in Domain. |
 | R2 ✅ | Introduce `IPanelGateway` and application models; move `PanelApiClient` + DTOs to Infrastructure; map at the boundary. | No panel DTOs outside Infrastructure; not-found vs unavailable preserved; tests pass. |
 | R3a ✅ | EF Core/Postgres foundation: `AppDbContext`, configurations, migrations, startup migration runner, Testcontainers harness, auth/session/outbox/audit/panel-mirror schema. No HTTP endpoints. | Migrations apply to a clean Postgres; schema tests cover unique/partial indexes and `xmin`; no endpoints exposed. |
-| R3b | Comment backfill + panel directory/sync/conflicts + admin sync/default-inbound menu. | Initial backfill is idempotent; sync is locked and observable; conflicts are persisted and alerted; default inbounds come from Postgres. |
+| R3b ✅ (panel scope) | Comment backfill + panel directory/sync/conflicts + admin sync/default-inbound menu. | Initial backfill is idempotent; sync is locked and observable; conflicts are persisted and alerted; default inbounds come from Postgres. |
 | R3c | Email outbox processor + email-code auth/identity use cases. No HTTP endpoints. | Code + outbox commit atomically; claim/retry/dead-letter tests pass; auth use cases covered against Postgres. |
 | R4 | Extract registration, claim, activation, and referral-settlement use cases; shrink `TelegramHandlers`. | Bot flows still pass existing tests; handler contains parsing/rendering only; no business rules. |
 | R5 | Extract admin, reminder, trial, cancel, and device-limit use cases; split `AdminPanelService`; background jobs call use cases. | Admin/reminder behavior unchanged; `AdminPanelService` is gone or a thin facade; tests pass. |
 | R6 | Add web auth endpoints + SPA shell + DB-backed dashboard + manual refresh. | Login, session, dashboard, refresh, and logout work end to end; no Telegram requirement. |
 | R7 | Credits ledger (Section 3). | Ledger design implemented behind use cases; panel projection reconciled. |
 
-R0–R3a are implemented: the Domain/Application/Infrastructure projects, NetArchTest boundary tests, the pure domain types
-(subscription status/formatter, referral/trial/credit tag policy, email normalization), the panel gateway, and the EF
-Core/PostgreSQL foundation with its initial migration and startup runner are in the solution. R3b–R7 remain unbuilt.
+R0–R3b panel scope is implemented: the Domain/Application/Infrastructure projects, NetArchTest boundary tests, the pure
+domain types (subscription status/formatter, referral/trial/credit tag policy, email normalization), the panel gateway,
+the EF Core/PostgreSQL foundation, the panel mirror/backfill/sync/conflicts, comment backfill, effective default
+inbounds, and `Panel Management` are in the solution. Comment-state dual-write, the read switch, and R3c–R7 remain
+unbuilt.
+
+R3b's exit criteria cover the panel mirror/sync/admin scope. The §4.6 comment-state dual-write is the remaining
+transition step: new referral/trial/cancel/reminder/credit changes still rely on legacy comment writes, and the read
+switch must not start until dual-write reconciliation passes.
 
 Sequencing:
 
@@ -785,9 +794,9 @@ from Phases 2–3 may land in R3a/R3b. That is storage only; wallet, spending, p
 
 ## 4. Identity, panel directory, sync, and conflicts
 
-**Status:** The R3a persistence schema is implemented. Backfill, panel sync, conflicts, and admin flows are planned in
-R3b; login and dashboard use cases follow. This is the foundation for login, dashboard, admin tooling, and comment
-removal.
+**Status:** The R3a persistence schema and the R3b panel mirror/backfill/sync/conflicts plus `Panel Management` are
+implemented. Comment-state dual-write, the read switch, and login/dashboard use cases follow. This is the foundation for
+login, dashboard, admin tooling, and comment removal.
 
 ### 4.1 Authority split
 
@@ -1047,11 +1056,15 @@ Migration sequence:
 5. **Stop writes:** stop adding/clearing comment tags. Keep `legacy_comment` as a snapshot for audit, not state.
 6. **Delete parsers:** remove comment-state parsing from production paths in R5 after the read switch is trusted.
 
+**Current status (2026-10-28):** The panel mirror and comment backfill in steps 1–2 are implemented. Step 3,
+comment-state dual-write, is still pending; existing comment writes remain authoritative for new referral, trial,
+cancellation, reminder, and credit changes. Steps 4–6 remain planned.
+
 Do not skip the reconciliation step. A missed `Referral credit` or `Trial until` tag changes entitlement behavior.
 
-### 4.7 Admin Panel Management menu (v1)
+### 4.7 Admin Panel Management menu (v1) ✅
 
-Add `/admin` → `🖥 Panel Management` with exactly these v1 actions:
+Implemented as `/admin` → `🖥 Panel Management` with exactly these v1 actions:
 
 - **📊 Sync Status:** last success, mode (cursor/full), seen/changed counts, last error, and **Run sync now**.
 - **⚠️ Conflicts:** open conflicts with email/Telegram ID/panel IDs and **Resolve** / **Dismiss** actions. No automatic
@@ -1122,7 +1135,7 @@ Rules:
 |---|---|---|
 | Self-service email change in the bot | Planned | Verify the new address; admin override with audit. |
 | Email verification during bot registration | Decided: not required | Accepted risk documented in §1.7. Revisit if abuse appears. |
-| Telegram `Panel Management` menu | Planned | v1: default inbounds, sync status, conflicts. No client CRUD. |
+| Telegram `Panel Management` menu | Implemented | v1: default inbounds, sync status, conflicts. No client CRUD. |
 | Durable bot sessions | Deferred | `SessionStore` is in-memory and resets on deploy. A Postgres JSONB session table would fix it but is not required for the web app. |
 | Tribute cancel video / exact cancel taps | Operational | Support-owned video; bot only points to support. Confirm the current Tribute flow before publishing. |
 | Referral loop monitoring | Deferred | A↔B loops are allowed in v1 because each leg needs a real paid activation; revisit if abuse appears. |
@@ -1242,3 +1255,5 @@ These are deliberately out of scope for the web app's first release:
 | 2026-10-26 | Telegram registration does not require email verification; login and email changes do. Accepted risk. |
 | 2026-10-26 | EF Core: focused `AppDbContext` in Infrastructure, configurations, startup migrations, `xmin` concurrency, partial indexes, outbox `SKIP LOCKED`, Testcontainers PostgreSQL. |
 | 2026-10-26 | Delivery order: architecture (R0–R2) → EF Core/schema (R3a) → comment backfill + panel sync/conflicts (R3b) → email/auth (R3c) → web app (R6) → credits (R7), with bot extraction in parallel. |
+| 2026-10-28 | R3b panel mirror/sync/conflicts, comment backfill, effective default inbounds, `Panel Management`, and post-write mirroring are implemented. Comment-state dual-write and the comment read switch remain pending. |
+| 2026-10-28 | Successful app-initiated panel writes are mirrored best-effort; mirror failures are logged and swallowed, and the next sync reconciles. The panel stays authoritative. |
