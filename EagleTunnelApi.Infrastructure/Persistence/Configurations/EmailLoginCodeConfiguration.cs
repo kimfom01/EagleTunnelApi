@@ -59,6 +59,12 @@ public sealed class EmailLoginCodeConfiguration : IEntityTypeConfiguration<Email
             .HasForeignKey(code => code.AppUserId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        builder.HasOne<PanelClient>()
+            .WithMany()
+            .HasForeignKey(code => code.PanelClientId)
+            .HasPrincipalKey(client => client.PanelClientId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         builder.HasIndex(code => new { code.EmailNormalized, code.ExpiresAt })
             .HasDatabaseName("ix_email_login_codes_email_normalized_expires_at");
 

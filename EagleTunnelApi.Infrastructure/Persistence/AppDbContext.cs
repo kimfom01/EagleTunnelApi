@@ -15,6 +15,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
 
+    public DbSet<PanelClient> PanelClients => Set<PanelClient>();
+
+    public DbSet<PanelInbound> PanelInbounds => Set<PanelInbound>();
+
+    public DbSet<PanelClientInbound> PanelClientInbounds => Set<PanelClientInbound>();
+
+    public DbSet<PanelSyncState> PanelSyncStates => Set<PanelSyncState>();
+
+    public DbSet<PanelSyncConflict> PanelSyncConflicts => Set<PanelSyncConflict>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);

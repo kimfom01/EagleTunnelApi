@@ -55,6 +55,12 @@ public sealed class AppUserConfiguration : IEntityTypeConfiguration<AppUser>
             .IsUnique()
             .HasDatabaseName("ux_app_users_panel_client_id");
 
+        builder.HasOne<PanelClient>()
+            .WithOne()
+            .HasForeignKey<AppUser>(user => user.PanelClientId)
+            .HasPrincipalKey<PanelClient>(client => client.PanelClientId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property<uint>("xmin")
             .HasColumnName("xmin")
             .HasColumnType("xid")
