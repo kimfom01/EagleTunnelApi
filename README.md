@@ -26,6 +26,11 @@ subscription status, and retrieve their VPN link.
 - **Expiry Reminders:** Daily reminders (3 / 2 / 1 / 0 days out) for cancelled, email-migrated accounts approaching
   expiry; instant manual nudges via `/admin` → `📨 Send Reminder`.
 - **Panel Integration:** Fetches, updates, enables/disables clients via the 3X-UI REST API.
+- **Panel Mirror & Sync:** Mirrors panel clients in PostgreSQL, syncs changed rows every 10 minutes by default,
+  periodically full-scans for deletions, and tracks identity conflicts without auto-merging them. Successful app
+  panel writes are mirrored best-effort; the panel remains authoritative.
+- **Panel Management:** `/admin` → `🖥 Panel Management` shows sync status, open conflicts with resolve/dismiss actions,
+  and the effective default inbounds used for new clients.
 - **Telegram Bot:** `/start` guides new users through email registration (with optional referrer), shows subscription
   status, `/help` points at support, `/referrer` lets unpaid users view or fix their referrer, `/admin` exposes a full
   account-management console (lookup, grant, ban/unban, device limit, traffic reset, link, register, change email,
@@ -85,8 +90,8 @@ docker run --env-file .env -p 8080:8080 eagletunnelapi
 ### Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the release checklist, current environment variables, and the infrastructure and
-settings required by each roadmap slice. R0 and R1 are behavior-preserving and need no new configuration; later slices add
-PostgreSQL, panel sync, email, or SPA prerequisites as documented there.
+settings required by each roadmap slice. R0 and R1 are behavior-preserving; R3b adds PostgreSQL, the panel mirror/sync,
+and `Panel Management`; later slices add email and SPA prerequisites as documented there.
 
 ## Scripts & CLI Commands
 
@@ -109,8 +114,8 @@ Configuration is handled via standard ASP.NET Core mechanisms (`appsettings.json
 | `Telegram:BotToken`           | `Telegram__BotToken`           | Bot token from @BotFather.                                                                   |
 | `Telegram:SupportUrl`         | `Telegram__SupportUrl`         | Support contact link shown by `/help`.                                                       |
 | `Telegram:TributeSubscriptionUrl` | `Telegram__TributeSubscriptionUrl` | Subscription/checkout link shown in menus and reminders.                                |
-| `Telegram:DefaultInboundIds`  | `Telegram__DefaultInboundIds`  | Comma-separated panel inbound ids new clients are attached to. Must match the panel — the panel rejects the whole add call if any id no longer exists. |
-| `Telegram:AdminIds`           | `Telegram__AdminIds`           | Comma-separated Telegram ids allowed to use `/admin`.                                        |
+| `Telegram:DefaultInboundIds`  | `Telegram__DefaultInboundIds`  | Comma-separated panel inbound ids used as the first-run seed and database-outage fallback. The effective set is stored in Postgres and managed under `Panel Management`; the panel rejects the whole add call if any effective id no longer exists. |
+| `Telegram:AdminIds`           | `Telegram__AdminIds`           | Comma-separated Telegram ids allowed to use `/admin` and receive panel sync/conflict alerts. |
 | `Telegram:WebhookPath`        | `Telegram__WebhookPath`        | Path of the Telegram webhook endpoint. Set explicitly; the code fallback is `/webhooks/telegram`, but `appsettings.json` ships an empty value. |
 | `Telegram:WebhookUrl`         | `Telegram__WebhookUrl`         | Public base URL used to register the webhook (**required in production**).                   |
 | `Telegram:WebhookSecretToken` | `Telegram__WebhookSecretToken` | Secret token checked on every Telegram webhook request.                                      |
@@ -118,6 +123,11 @@ Configuration is handled via standard ASP.NET Core mechanisms (`appsettings.json
 | `Telegram:ReferralBonusDays`  | `Telegram__ReferralBonusDays`  | Free days granted to a referrer on the referee's first payment (default `30`, `0` disables). |
 | `Telegram:ReminderHourUtc`    | `Telegram__ReminderHourUtc`    | Hour of day in UTC (`0`-`23`) when expiry reminders are sent (default `9`).                  |
 | `Telegram:TrialDurationHours` | `Telegram__TrialDurationHours` | Free trial hours for newly registered accounts (default `3`, `0` disables).                  |
+| `PanelSync:IntervalMinutes`   | `PanelSync__IntervalMinutes`   | Minutes between cursor sync runs (`1`–`1440`, default `10`).                                  |
+| `PanelSync:FullReconcileHours` | `PanelSync__FullReconcileHours` | Hours between full scans for deletions (`1`–`720`, default `24`).                            |
+| `PanelSync:FailureAlertThreshold` | `PanelSync__FailureAlertThreshold` | Consecutive sync failures before admin alerts (`2`–`100`, default `3`).                  |
+| `PanelSync:ConflictNotificationBatchSize` | `PanelSync__ConflictNotificationBatchSize` | Maximum open conflicts notified per pass (`1`–`200`, default `50`).               |
+| `PanelSync:CommentBackfillOnStartup` | `PanelSync__CommentBackfillOnStartup` | Run legacy comment backfill once after the first successful sync (default `true`).   |
 
 ### Example `.env` file:
 
@@ -247,11 +257,11 @@ failed panel operations surface as non-200 responses and trigger a retry rather 
 Unimplemented work is tracked in [FEATURES.md](FEATURES.md):
 
 - Clean architecture refactor (Domain/Application/Infrastructure/Api) so new features land behind explicit boundaries.
-  R0 (projects and NetArchTest boundary tests) and R1 (pure domain types) are implemented; the remaining slices move
-  code behind the boundaries.
+  R0–R2 and the R3a persistence foundation are implemented; R3b adds the panel mirror/sync/conflicts and
+  `Panel Management`; R3c and later slices remain.
 - Email-first Vite + React web app with PostgreSQL-backed auth/identity/audit; no Telegram required to log in.
-- PostgreSQL panel mirror with 10-minute reconciliation, manual refresh, conflict alerts, and comment-state migration.
-- Telegram `Panel Management` v1: default inbounds, sync status, and conflicts.
+- Comment-state dual-write for new referral/trial/cancel/reminder/credit changes, then the DB-backed read switch and
+  comment-write removal.
 - Credits ledger and eventual Tribute replacement.
 - Pending manual verification and operational checks.
 
@@ -266,8 +276,8 @@ event handling (fetch / update / auto-create / idempotent fallback / error surfa
 idempotency, no-chaining, gift/self-referral blocks,
 pending referrals, trial referees, trial-tag stripping),
 trial registration, friend pre-registration and claim, admin register/change-email, partial-email pick lists, nudge flow,
-cancellation tagging, expiry reminders, subscription status derivation, and the Telegram bot flows including the
-registration wizard and admin commands.
+cancellation tagging, expiry reminders, subscription status derivation, panel mirror backfill/sync/conflicts, and the
+Telegram bot flows including the registration wizard, admin commands, and `Panel Management`.
 
 Run them with:
 

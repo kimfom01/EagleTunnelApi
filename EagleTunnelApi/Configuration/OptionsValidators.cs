@@ -74,3 +74,25 @@ public sealed class TributeOptionsValidator : IValidateOptions<TributeOptions>
         return ValidateOptionsResult.Success;
     }
 }
+
+public sealed class PanelSyncOptionsValidator : IValidateOptions<PanelSyncOptions>
+{
+    public ValidateOptionsResult Validate(string? name, PanelSyncOptions options)
+    {
+        var errors = new List<string>();
+
+        if (options.IntervalMinutes is < 1 or > 1440)
+            errors.Add("PanelSync:IntervalMinutes must be between 1 and 1440.");
+
+        if (options.FullReconcileHours is < 1 or > 720)
+            errors.Add("PanelSync:FullReconcileHours must be between 1 and 720.");
+
+        if (options.FailureAlertThreshold is < 2 or > 100)
+            errors.Add("PanelSync:FailureAlertThreshold must be between 2 and 100.");
+
+        if (options.ConflictNotificationBatchSize is < 1 or > 200)
+            errors.Add("PanelSync:ConflictNotificationBatchSize must be between 1 and 200.");
+
+        return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
+    }
+}

@@ -127,6 +127,9 @@ public class ReferralServiceTests
 
         Assert.True(ReferralService.IsCancelled(comment));
         Assert.False(ReferralService.IsCancelled("base"));
+        Assert.True(ReferralService.TryGetCancelledDate(comment, out var cancelledDate));
+        Assert.Equal(new DateOnly(2026, 9, 9), cancelledDate);
+        Assert.False(ReferralService.TryGetCancelledDate("Cancelled not-a-date", out _));
 
         var cleared = ReferralService.ClearCancelled(comment);
         Assert.False(ReferralService.IsCancelled(cleared));
@@ -142,6 +145,10 @@ public class ReferralServiceTests
         Assert.True(ReferralService.HasReminderMarker(comment, 3, expiry));
         Assert.False(ReferralService.HasReminderMarker(comment, 2, expiry));
         Assert.False(ReferralService.HasReminderMarker(comment, 3, expiry.AddDays(30)));
+
+        var markers = ReferralService.GetReminderMarkers(
+            "Reminder 3d sent for 2026-10-01 · Reminder 1d sent for 2026-10-01 · malformed");
+        Assert.Equal(new[] { new ReminderMarker(1, expiry), new ReminderMarker(3, expiry) }, markers);
     }
 
     [Fact]

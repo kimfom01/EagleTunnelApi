@@ -32,6 +32,14 @@ public interface IPanelGateway
 
     Task<IReadOnlyList<PanelClientSummary>> GetAllClientsAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Fetches one page of slim panel client rows. The page is a change
+    /// detector, not a complete client record; changed rows must be refreshed
+    /// with <see cref="GetClientByEmailAsync"/>.
+    /// </summary>
+    Task<PanelClientPage> GetClientsPageAsync(PanelClientPageRequest request,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<PanelInboundOption>> GetInboundOptionsAsync(CancellationToken cancellationToken);
 
     Task ResetClientTrafficAsync(string email, CancellationToken cancellationToken);

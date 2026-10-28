@@ -2,8 +2,11 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Configuration;
+using EagleTunnelApi.Health;
 using EagleTunnelApi.Infrastructure.PanelApi;
+using EagleTunnelApi.Infrastructure.Persistence;
 using EagleTunnelApi.Logging;
+using EagleTunnelApi.PanelSync;
 using EagleTunnelApi.ServiceDefaults;
 using EagleTunnelApi.Telegram;
 using EagleTunnelApi.Webhook.Events;
@@ -20,6 +23,12 @@ using Telegram.Bot.Types;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
+
+builder.Services.AddPersistence(builder.Configuration);
+builder.Services.AddScoped<IPanelBackfill, PanelBackfillService>();
+
+builder.Services.AddHealthChecks()
+    .AddCheck<PostgresHealthCheck>("postgres");
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -48,6 +57,8 @@ builder.Services.PostConfigure<TelegramOptions>(options =>
             .Select(long.Parse).ToArray();
 });
 builder.Services.AddSingleton<IValidateOptions<TelegramOptions>, TelegramOptionsValidator>();
+builder.Services.AddSingleton(serviceProvider => new PanelDirectoryFallback(
+    serviceProvider.GetRequiredService<IOptions<TelegramOptions>>().Value.DefaultInboundIds));
 
 builder.Services.AddOptions<PanelOptions>()
     .Bind(builder.Configuration.GetSection(PanelOptions.SectionName))
@@ -59,11 +70,16 @@ builder.Services.AddOptions<TributeOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<TributeOptions>, TributeOptionsValidator>();
 
+builder.Services.AddOptions<PanelSyncOptions>()
+    .Bind(builder.Configuration.GetSection(PanelSyncOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<PanelSyncOptions>, PanelSyncOptionsValidator>();
+
 builder.Services.AddScoped<IVerifier, Verifier>();
 
 builder.Services.AddTransient<OutgoingRequestLoggingHandler>();
 
-builder.Services.AddHttpClient<IPanelGateway, PanelApiGateway>((sp, client) =>
+builder.Services.AddHttpClient<PanelApiGateway>((sp, client) =>
 {
     var panelOptions = sp.GetRequiredService<IOptions<PanelOptions>>().Value;
 
@@ -71,6 +87,11 @@ builder.Services.AddHttpClient<IPanelGateway, PanelApiGateway>((sp, client) =>
     client.DefaultRequestHeaders.Authorization =
         new AuthenticationHeaderValue("Bearer", panelOptions.ApiKey);
 }).AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
+
+builder.Services.AddTransient<IPanelGateway>(sp => new MirroringPanelGateway(
+    sp.GetRequiredService<PanelApiGateway>(),
+    sp.GetRequiredService<IPanelMirrorWriter>(),
+    sp.GetRequiredService<ILogger<MirroringPanelGateway>>()));
 
 builder.Services.AddHttpClient("telegram_bot_client")
     .AddTypedClient<ITelegramBotClient>((httpClient, sp) =>
@@ -80,6 +101,8 @@ builder.Services.AddHttpClient("telegram_bot_client")
     })
     .AddHttpMessageHandler<OutgoingRequestLoggingHandler>();
 
+builder.Services.AddScoped<IPanelSyncNotifier, PanelSyncNotifier>();
+builder.Services.AddSingleton<IPanelSyncRunner, PanelSyncRunner>();
 builder.Services.AddSingleton<ISubscriptionProvisioner, SubscriptionProvisioner>();
 builder.Services.AddSingleton<ITributeEventsHandler, TributeEventsHandler>();
 builder.Services.AddSingleton<IAdminPanelService, AdminPanelService>();
@@ -99,7 +122,13 @@ builder.Services.AddHostedService<ReferralSettlementService>();
 
 builder.Services.AddHostedService<PanelInboundPreflightService>();
 
+builder.Services.AddHostedService<PanelSyncWorker>();
+
 var app = builder.Build();
+
+await app.Services.GetRequiredService<DatabaseMigrationRunner>().MigrateAsync();
+await app.Services.GetRequiredService<IPanelDirectory>()
+    .GetDefaultInboundIdsAsync(CancellationToken.None);
 
 app.MapDefaultEndpoints();
 

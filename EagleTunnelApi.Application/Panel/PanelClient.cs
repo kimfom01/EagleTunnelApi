@@ -16,7 +16,7 @@ public sealed record PanelClient(
     string? Security,
     string? SubId,
     string? Flow,
-    int Id,
+    long Id,
     IReadOnlyList<int>? InboundIds
 );
 

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using EagleTunnelApi.Application.Panel;
 using EagleTunnelApi.Configuration;
 using EagleTunnelApi.Domain.Referrals;
 using EagleTunnelApi.Infrastructure.PanelApi;
@@ -75,6 +76,36 @@ public class TelegramHandlersTests
         return JsonSerializer.Serialize(new PanelApiResponseDto<object>(false, message, null));
     }
 
+    private static string InboundOptionsJson(params int[] inboundIds)
+    {
+        var options = inboundIds
+            .Select(id => new PanelInboundOptionDto(id, $"Inbound {id}", $"tag-{id}", "vless", 443, true))
+            .ToList();
+
+        return JsonSerializer.Serialize(
+            new PanelApiResponseDto<List<PanelInboundOptionDto>>(true, "ok", options));
+    }
+
+    private static PanelSyncConflictView OpenConflict(Guid id, string email, long telegramId,
+        long panelClientId, long? otherPanelClientId = null)
+    {
+        var seenAt = new DateTimeOffset(2026, 10, 28, 9, 30, 0, TimeSpan.Zero);
+
+        return new PanelSyncConflictView
+        {
+            Id = id,
+            DedupeKey = $"email:{email}",
+            Type = "email",
+            EmailNormalized = email,
+            TelegramId = telegramId,
+            PanelClientId = panelClientId,
+            OtherPanelClientId = otherPanelClientId,
+            Status = PanelSyncConflictStates.Open,
+            FirstSeenAt = seenAt.AddDays(-1),
+            LastSeenAt = seenAt
+        };
+    }
+
     private static string SuccessJson()
     {
         return JsonSerializer.Serialize(new PanelApiResponseDto<object>(true, "ok", null));
@@ -91,7 +122,9 @@ public class TelegramHandlersTests
     private static (TelegramHandlers Handler, FakeTelegramBotClient Bot) CreateHandler(
         Func<HttpRequestMessage, HttpResponseMessage> panelResponder,
         long[]? adminIds = null,
-        int trialHours = 2)
+        int trialHours = 2,
+        StubPanelDirectory? panelDirectory = null,
+        StubPanelSyncRunner? panelSyncRunner = null)
     {
         var bot = new FakeTelegramBotClient();
 
@@ -102,7 +135,9 @@ public class TelegramHandlersTests
             TributeSubscriptionUrl = "https://tribute.test",
             BotUsername = "TestBot",
             TrialDurationHours = trialHours,
-            DefaultInboundIds = new[] { 1, 2 },
+            // The effective values come from PanelDirectory; this fallback must
+            // not be used when the directory has an authoritative set.
+            DefaultInboundIds = new[] { 99 },
             WebhookPath = "/webhooks/telegram",
             AdminIds = adminIds ?? Array.Empty<long>()
         });
@@ -117,7 +152,9 @@ public class TelegramHandlersTests
         var settlementRunner = new ReferralSettlementRunner(adminPanelService, new TestHostApplicationLifetime(),
             NullLogger<ReferralSettlementRunner>.Instance);
 
-        var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService, settlementRunner,
+        var handler = new TelegramHandlers(new SessionStore(), panelClient,
+            panelDirectory ?? new StubPanelDirectory { DefaultInboundIds = [1, 2] },
+            panelSyncRunner ?? new StubPanelSyncRunner(), adminPanelService, settlementRunner,
             telegramOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
             NullLogger<TelegramHandlers>.Instance);
 
@@ -267,6 +304,8 @@ public class TelegramHandlersTests
         Assert.Equal("newbie@example.com", client.GetProperty("email").GetString());
         Assert.True(client.GetProperty("enable").GetBoolean());
         Assert.Equal(TelegramId, client.GetProperty("tgId").GetInt64());
+        Assert.Equal(new[] { 1, 2 }, payload.GetProperty("inboundIds").EnumerateArray()
+            .Select(e => e.GetInt32()).ToArray());
         Assert.InRange(client.GetProperty("expiryTime").GetInt64(),
             DateTimeOffset.UtcNow.AddHours(2).AddMinutes(-2).ToUnixTimeMilliseconds(),
             DateTimeOffset.UtcNow.AddHours(2).AddMinutes(2).ToUnixTimeMilliseconds());
@@ -2269,6 +2308,221 @@ public class TelegramHandlersTests
         Assert.Contains("Admin Panel", send.Body);
         Assert.Contains("\"admin:lookup\"", send.Body);
         Assert.Contains("\"admin:grant\"", send.Body);
+        Assert.Contains("\"admin:pm\"", send.Body);
+        Assert.Contains("Panel Management", send.Body);
+    }
+
+    [Fact]
+    public async Task PanelManagement_ShowsRequiredActions()
+    {
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), [TelegramId]);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanel), CancellationToken.None);
+
+        var edit = Assert.Single(bot.Requests, r => r.MethodName == "editMessageText");
+        Assert.Contains("Panel Management", edit.Body);
+        Assert.Contains("\"admin:pm:sync\"", edit.Body);
+        Assert.Contains("\"admin:pm:conflicts\"", edit.Body);
+        Assert.Contains("\"admin:pm:i\"", edit.Body);
+    }
+
+    [Fact]
+    public async Task PanelSyncStatus_ShowsLastRunDetailsAndRunButton()
+    {
+        var directory = new StubPanelDirectory
+        {
+            SyncStatus = new PanelSyncStatus
+            {
+                LastSuccessAt = new DateTimeOffset(2026, 10, 28, 10, 0, 0, TimeSpan.Zero),
+                LastRunMode = "cursor",
+                LastSeenCount = 21,
+                LastChangedCount = 4,
+                LastError = "panel timeout"
+            }
+        };
+
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), [TelegramId],
+            panelDirectory: directory);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanel), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelSync), CancellationToken.None);
+
+        var edit = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Last success: 2026-10-28 10:00 UTC", edit.Body);
+        Assert.Contains("Last run mode: cursor", edit.Body);
+        Assert.Contains("Seen: 21", edit.Body);
+        Assert.Contains("Changed: 4", edit.Body);
+        Assert.Contains("panel timeout", edit.Body);
+        Assert.Contains("\"admin:pm:sync:run\"", edit.Body);
+    }
+
+    [Fact]
+    public async Task PanelSyncRunNow_RunsSyncAndReportsResult()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var runner = new StubPanelSyncRunner
+        {
+            Handler = (_, _) => Task.FromResult(new PanelSyncResult(false, "full", 9, 3, 1, 2, 0,
+                null, now, now, null))
+        };
+
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), [TelegramId],
+            panelSyncRunner: runner);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanel), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelSync), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelSyncRun),
+            CancellationToken.None);
+
+        await bot.WaitForAsync((method, body) =>
+            method == "editMessageText" && body.Contains("Panel sync completed"));
+
+        var owner = Assert.Single(runner.Owners);
+        Assert.StartsWith("panel-sync:admin:12345:", owner);
+
+        var edit = bot.Requests.Last(r =>
+            r.MethodName == "editMessageText" && r.Body.Contains("Panel sync completed"));
+        Assert.Contains("Mode: full", edit.Body);
+        Assert.Contains("Seen: 9", edit.Body);
+        Assert.Contains("Changed: 3", edit.Body);
+        Assert.Contains("Conflicts: 2", edit.Body);
+    }
+
+    [Fact]
+    public async Task PanelConflicts_ShowIdentityDetailsAndResolve()
+    {
+        var conflictId = Guid.NewGuid();
+        var directory = new StubPanelDirectory();
+        directory.Conflicts.Add(OpenConflict(conflictId, "user@example.com", 12345, 456, 789));
+
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), [TelegramId],
+            panelDirectory: directory);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanel), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelConflicts),
+            CancellationToken.None);
+
+        var list = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("user@example.com", list.Body);
+        Assert.Contains("12345", list.Body);
+        Assert.Contains("456", list.Body);
+        Assert.Contains("789", list.Body);
+        Assert.Contains("Resolve", list.Body);
+        Assert.Contains("Dismiss", list.Body);
+        Assert.Contains($"{MenuService.AdminPanelResolvePrefix}{conflictId}", list.Body);
+
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminPanelResolvePrefix}{conflictId}"), CancellationToken.None);
+
+        var call = Assert.Single(directory.ResolveCalls);
+        Assert.Equal(conflictId, call.ConflictId);
+        Assert.Equal(PanelSyncConflictStates.Resolved, call.Status);
+        Assert.Equal("telegram:12345", call.Actor);
+
+        var after = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Conflict resolved", after.Body);
+        Assert.Contains("No open conflicts", after.Body);
+    }
+
+    [Fact]
+    public async Task PanelConflicts_DismissMarksConflictDismissed()
+    {
+        var conflictId = Guid.NewGuid();
+        var directory = new StubPanelDirectory();
+        directory.Conflicts.Add(OpenConflict(conflictId, "dismiss@example.com", 54321, 654));
+
+        var (handler, bot) = CreateHandler(_ => Json(EmptyListJson()), [TelegramId],
+            panelDirectory: directory);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanel), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelConflicts),
+            CancellationToken.None);
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminPanelDismissPrefix}{conflictId}"), CancellationToken.None);
+
+        var call = Assert.Single(directory.ResolveCalls);
+        Assert.Equal(conflictId, call.ConflictId);
+        Assert.Equal(PanelSyncConflictStates.Dismissed, call.Status);
+        Assert.Equal("telegram:12345", call.Actor);
+
+        var after = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Conflict dismissed", after.Body);
+        Assert.Contains("No open conflicts", after.Body);
+    }
+
+    [Fact]
+    public async Task PanelDefaultInbounds_TogglesAndSaves()
+    {
+        var directory = new StubPanelDirectory { DefaultInboundIds = [1, 2] };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/admin/panel/api/inbounds/options")
+                return Json(InboundOptionsJson(1, 2, 3));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, [TelegramId], panelDirectory: directory);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanel), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelInbounds),
+            CancellationToken.None);
+
+        var initial = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Current: 1, 2", initial.Body);
+        Assert.Contains($"{MenuService.AdminPanelInboundTogglePrefix}1", initial.Body);
+        Assert.Contains($"{MenuService.AdminPanelInboundTogglePrefix}2", initial.Body);
+        Assert.Contains($"{MenuService.AdminPanelInboundTogglePrefix}3", initial.Body);
+        Assert.DoesNotContain($"\"{MenuService.AdminPanelInboundsSave}\"", initial.Body);
+
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminPanelInboundTogglePrefix}3"), CancellationToken.None);
+
+        var toggled = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Selected: 1, 2, 3", toggled.Body);
+        Assert.Contains($"\"{MenuService.AdminPanelInboundsSave}\"", toggled.Body);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelInboundsSave),
+            CancellationToken.None);
+
+        var save = Assert.Single(directory.SetDefaultInboundsCalls);
+        Assert.Equal([1, 2, 3], save.InboundIds);
+        Assert.Equal([1, 2, 3], save.AvailableInbounds.Select(option => option.Id));
+        Assert.Equal("telegram:12345", save.Actor);
+        Assert.Equal([1, 2, 3], directory.DefaultInboundIds);
+
+        var saved = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Default inbounds saved", saved.Body);
+        Assert.Contains("Current: 1, 2, 3", saved.Body);
+    }
+
+    [Fact]
+    public async Task PanelDefaultInbounds_EmptySelectionIsRejected()
+    {
+        var directory = new StubPanelDirectory { DefaultInboundIds = [1, 2] };
+
+        var (handler, bot) = CreateHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/admin/panel/api/inbounds/options")
+                return Json(InboundOptionsJson(1, 2));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        }, [TelegramId], panelDirectory: directory);
+
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanel), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelInbounds),
+            CancellationToken.None);
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminPanelInboundTogglePrefix}1"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot,
+            CallbackUpdate($"{MenuService.AdminPanelInboundTogglePrefix}2"), CancellationToken.None);
+        await handler.HandleUpdateAsync(bot, CallbackUpdate(MenuService.AdminPanelInboundsSave),
+            CancellationToken.None);
+
+        Assert.Empty(directory.SetDefaultInboundsCalls);
+        Assert.Equal([1, 2], directory.DefaultInboundIds);
+
+        var edit = bot.Requests.Last(r => r.MethodName == "editMessageText");
+        Assert.Contains("Select at least one inbound", edit.Body);
     }
 
     [Fact]
@@ -2498,7 +2752,9 @@ public class TelegramHandlersTests
         var settlementRunner = new ReferralSettlementRunner(adminPanelService,
             new TestHostApplicationLifetime(), NullLogger<ReferralSettlementRunner>.Instance);
 
-        var handler = new TelegramHandlers(new SessionStore(), panelClient, adminPanelService, settlementRunner,
+        var handler = new TelegramHandlers(new SessionStore(), panelClient,
+            new StubPanelDirectory { DefaultInboundIds = [2, 6] }, new StubPanelSyncRunner(),
+            adminPanelService, settlementRunner,
             telegramOptions, Options.Create(new PanelOptions { BaseUri = PanelBaseUri, ApiKey = "key" }),
             NullLogger<TelegramHandlers>.Instance);
 

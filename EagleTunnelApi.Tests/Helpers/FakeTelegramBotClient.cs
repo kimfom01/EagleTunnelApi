@@ -16,6 +16,12 @@ public sealed class FakeTelegramBotClient : ITelegramBotClient
 
     public List<(string MethodName, string Body)> Requests { get; } = [];
 
+    /// <summary>
+    /// Optional failure hook for tests that need a request to fail after it has
+    /// been recorded. Return null to let the request succeed.
+    /// </summary>
+    public Func<string, string, Exception?>? FailureFactory { get; set; }
+
     public bool LocalBotServer { get; } = false;
 
     public long BotId { get; } = 0;
@@ -85,6 +91,8 @@ public sealed class FakeTelegramBotClient : ITelegramBotClient
         }
 
         foreach (var completion in completed) completion.TrySetResult(true);
+
+        if (FailureFactory?.Invoke(request.MethodName, body) is { } failure) throw failure;
 
         TResponse result = default!;
         return Task.FromResult(result);

@@ -1,7 +1,7 @@
 namespace EagleTunnelApi.Application.Panel;
 
 public sealed record PanelClientSummary(
-    int Id,
+    long Id,
     string Email,
     string? SubId,
     string? Uuid,

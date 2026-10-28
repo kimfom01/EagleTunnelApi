@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace EagleTunnelApi.Infrastructure.PanelApi.Models;
 
 public sealed record PanelClientSummaryDto(
-    [property: JsonPropertyName("id")] int Id,
+    [property: JsonPropertyName("id")] long Id,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("subId")] string? SubId,
     [property: JsonPropertyName("uuid")] string? Uuid,

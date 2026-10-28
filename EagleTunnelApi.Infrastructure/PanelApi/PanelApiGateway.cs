@@ -162,6 +162,48 @@ public sealed class PanelApiGateway(HttpClient httpClient, ILogger<PanelApiGatew
         return clients;
     }
 
+    public async Task<PanelClientPage> GetClientsPageAsync(PanelClientPageRequest request,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "Fetching Client Page From Panel. Page: {Page}, PageSize: {PageSize}, Sort: {Sort}, Order: {Order}",
+            request.Page, request.PageSize, request.Sort, request.Order);
+
+        var query = new List<string>
+        {
+            $"page={request.Page}",
+            $"pageSize={request.PageSize}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(request.Sort)) query.Add($"sort={Uri.EscapeDataString(request.Sort)}");
+
+        if (!string.IsNullOrWhiteSpace(request.Order)) query.Add($"order={Uri.EscapeDataString(request.Order)}");
+
+        if (!string.IsNullOrWhiteSpace(request.Search)) query.Add($"search={Uri.EscapeDataString(request.Search)}");
+
+        var response = await GetJsonAsync<PanelApiResponseDto<PanelClientPageResponseDto>>(
+            $"/admin/panel/api/clients/list/paged?{string.Join("&", query)}", cancellationToken);
+
+        if (response is null) throw new PanelApiException("Panel returned an empty response");
+
+        if (!response.Success)
+        {
+            logger.LogError("Panel client page fetch failed. Message: {Msg}", response.Msg);
+            throw new PanelApiException($"Panel client page fetch failed: {response.Msg}");
+        }
+
+        if (response.Obj is null) throw new PanelApiException("Panel returned an empty client page");
+
+        var page = response.Obj;
+        var rows = (page.Items ?? []).Select(Map).ToList();
+
+        logger.LogInformation(
+            "Successfully Fetched Client Page From Panel. Page: {Page}, Count: {Count}, Total: {Total}",
+            page.Page, rows.Count, page.Total);
+
+        return new PanelClientPage(rows, page.Page, page.PageSize, page.Total, page.Filtered);
+    }
+
     public async Task<IReadOnlyList<PanelInboundOption>> GetInboundOptionsAsync(
         CancellationToken cancellationToken)
     {
@@ -245,7 +287,11 @@ public sealed class PanelApiGateway(HttpClient httpClient, ILogger<PanelApiGatew
     private static PanelClientDetails Map(PanelClientResponseDto response)
     {
         return new PanelClientDetails(Map(response.Client), response.ExternalLinks, response.InboundIds,
-            response.UsedTraffic);
+            response.UsedTraffic)
+        {
+            CreatedAt = FromUnixMilliseconds(response.Client.CreatedAt),
+            UpdatedAt = FromUnixMilliseconds(response.Client.UpdatedAt)
+        };
     }
 
     private static PanelClient Map(PanelClientDto client)
@@ -286,6 +332,34 @@ public sealed class PanelApiGateway(HttpClient httpClient, ILogger<PanelApiGatew
                 ? null
                 : new PanelTrafficSummary(summary.Traffic.Up, summary.Traffic.Down, summary.Traffic.Enable)
         );
+    }
+
+    private static PanelClientPageRow Map(PanelClientSlimDto row)
+    {
+        return new PanelClientPageRow(
+            row.Email,
+            row.SubId,
+            row.Enable,
+            row.ExpiryTime,
+            row.TotalGB,
+            row.LimitIp,
+            row.LimitHwid,
+            row.Reset,
+            row.ResetDay,
+            row.ResetMax,
+            row.ResetWeekday,
+            row.InboundIds ?? [],
+            row.Traffic is null
+                ? null
+                : new PanelTrafficSummary(row.Traffic.Up, row.Traffic.Down, row.Traffic.Enable),
+            DateTimeOffset.FromUnixTimeMilliseconds(row.CreatedAt),
+            DateTimeOffset.FromUnixTimeMilliseconds(row.UpdatedAt)
+        );
+    }
+
+    private static DateTimeOffset? FromUnixMilliseconds(long value)
+    {
+        return value > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(value) : null;
     }
 
     private static PanelInboundOption Map(PanelInboundOptionDto inbound)

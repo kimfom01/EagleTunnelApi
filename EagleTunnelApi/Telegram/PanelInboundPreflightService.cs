@@ -1,18 +1,16 @@
 using EagleTunnelApi.Application.Panel;
-using EagleTunnelApi.Configuration;
-using Microsoft.Extensions.Options;
 
 namespace EagleTunnelApi.Telegram;
 
 /// <summary>
-/// Checks at startup that every configured default inbound id still exists on
+/// Checks at startup that every effective default inbound id still exists on
 /// the panel. Panel upgrades can renumber or remove inbounds; the new add
 /// endpoint rejects the whole create call when any requested inbound is
 /// missing, so a stale id silently breaks all new provisioning.
 /// </summary>
 public sealed class PanelInboundPreflightService(
     IPanelGateway panelClient,
-    IOptions<TelegramOptions> telegramOptions,
+    IPanelDirectory panelDirectory,
     ILogger<PanelInboundPreflightService> logger) : BackgroundService
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
@@ -24,22 +22,22 @@ public sealed class PanelInboundPreflightService(
 
     public async Task CheckAsync(CancellationToken cancellationToken)
     {
-        var configured = telegramOptions.Value.DefaultInboundIds;
-
-        if (configured.Length == 0) return;
-
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(Timeout);
 
         try
         {
+            var effective = await panelDirectory.GetDefaultInboundIdsAsync(timeout.Token);
+
+            if (effective.Count == 0) return;
+
             var available = (await panelClient.GetInboundOptionsAsync(timeout.Token))
                 .Select(inbound => inbound.Id)
                 .Distinct()
                 .Order()
                 .ToArray();
 
-            var missing = configured
+            var missing = effective
                 .Where(id => !available.Contains(id))
                 .Distinct()
                 .Order()
@@ -47,14 +45,15 @@ public sealed class PanelInboundPreflightService(
 
             if (missing.Length > 0)
                 logger.LogCritical(
-                    "Panel inbound preflight failed: Telegram:DefaultInboundIds references inbound id(s) " +
+                    "Panel inbound preflight failed: the effective default inbound ids reference inbound id(s) " +
                     "{Missing} that do not exist on the panel. Available inbound ids: {Available}. " +
+                    "Update /admin -> Panel Management -> Default Inbounds (or Telegram:DefaultInboundIds). " +
                     "New client creation will fail until this is corrected.",
                     string.Join(", ", missing), string.Join(", ", available));
             else
                 logger.LogInformation(
-                    "Panel inbound preflight passed. Configured inbound ids: {InboundIds}",
-                    string.Join(", ", configured));
+                    "Panel inbound preflight passed. Effective default inbound ids: {InboundIds}",
+                    string.Join(", ", effective));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

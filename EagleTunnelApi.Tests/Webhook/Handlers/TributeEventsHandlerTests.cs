@@ -119,6 +119,7 @@ public class TributeEventsHandlerTests
         List<HttpRequestMessage>? requests = null, int[]? inboundIds = null, int referralBonusDays = 30)
     {
         var bot = new FakeTelegramBotClient();
+        var effectiveInboundIds = inboundIds ?? new[] { 1, 2 };
 
         var options = Options.Create(new TelegramOptions
         {
@@ -127,7 +128,9 @@ public class TributeEventsHandlerTests
             TributeSubscriptionUrl = "https://tribute.test/sub",
             BotUsername = "TestBot",
             ReferralBonusDays = referralBonusDays,
-            DefaultInboundIds = inboundIds ?? new[] { 1, 2 },
+            // The effective values come from PanelDirectory; this fallback must
+            // not be used when the directory has an authoritative set.
+            DefaultInboundIds = new[] { 99 },
             WebhookPath = "/webhooks/telegram"
         });
 
@@ -144,7 +147,8 @@ public class TributeEventsHandlerTests
             bot, options);
 
         return (new TributeEventsHandler(NullLogger<TributeEventsHandler>.Instance,
-            new SubscriptionProvisioner(NullLogger<SubscriptionProvisioner>.Instance, panelClient, options),
+            new SubscriptionProvisioner(NullLogger<SubscriptionProvisioner>.Instance, panelClient,
+                new StubPanelDirectory { DefaultInboundIds = effectiveInboundIds }),
             panelClient, adminPanelService), bot);
     }
 
@@ -193,6 +197,8 @@ public class TributeEventsHandlerTests
         Assert.Equal(client.Security, body.GetProperty("security").GetString());
         Assert.Equal(client.SubId, body.GetProperty("subId").GetString());
         Assert.Equal(client.Flow, body.GetProperty("flow").GetString());
+        Assert.Equal(new[] { 1, 2 }, body.GetProperty("inboundIds").EnumerateArray()
+            .Select(e => e.GetInt32()).ToArray());
         Assert.DoesNotContain(requests, r => r.RequestUri!.AbsolutePath.EndsWith("/clients/add"));
     }
 
@@ -404,7 +410,7 @@ public class TributeEventsHandlerTests
     }
 
     [Fact]
-    public async Task HandleNewSubscription_MissingClient_CreatesClient_WithConfiguredInbounds()
+    public async Task HandleNewSubscription_MissingClient_CreatesClient_WithEffectiveInbounds()
     {
         var requests = new List<HttpRequestMessage>();
 
